@@ -23,6 +23,7 @@ interface MoveRecord {
   source: MoveSource;
   evaluation: number;
   certainty: Certainty;
+  analysis?: MoveAnalysis;
 }
 
 interface TrendPoint { label: string; value: number; certainty: Certainty; }
@@ -359,7 +360,7 @@ export function BlackHoleGame() {
         if (generationRef.current !== gameGeneration) return;
         const resolvedEvaluation = exactIndex(analysis.bestFirstValue, aiPlayer);
         nextHistory = nextHistory.map((item, index) => index === nextHistory.length - 1
-          ? { ...item, evaluation: resolvedEvaluation, certainty: 'exact' as const }
+          ? { ...item, evaluation: resolvedEvaluation, certainty: 'exact' as const, analysis }
           : item);
         setMoves(nextHistory);
         setTrend(trendFromMoves(nextHistory, currentMode));
@@ -384,7 +385,7 @@ export function BlackHoleGame() {
       const value = analysis.bestFirstValue;
       const evaluation = exactIndex(value, FIRST_PLAYER);
       const nextHistory = history.map((move, index) => index === history.length - 1
-        ? { ...move, evaluation, certainty: 'exact' as const }
+        ? { ...move, evaluation, certainty: 'exact' as const, analysis }
         : move);
       const outcome = value > 0 ? '完美应对下先手可胜' : value < 0 ? '完美应对下后手可胜' : '完美应对下可逼平';
       setMoves(nextHistory);
@@ -437,7 +438,7 @@ export function BlackHoleGame() {
     setMoves(nextMoves);
     setTrend(trendFromMoves(nextMoves, mode));
     setResult(null);
-    setMoveAnalysis(null);
+    setMoveAnalysis(nextMoves.at(-1)?.analysis ?? null);
     setError(null);
     setThinking(false);
     setEvaluating(false);
