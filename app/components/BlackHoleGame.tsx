@@ -27,7 +27,7 @@ interface MoveRecord {
 }
 
 interface TrendPoint { label: string; value: number; certainty: Certainty; }
-interface OpeningHint { cell: number; source: 'certificate' | 'mcts'; iterations: number; estimate: number; }
+interface OpeningHint { cell: number; source: 'certificate' | 'exact' | 'mcts'; iterations: number; estimate: number; value: number; }
 interface MoveAnalysis {
   wins: number;
   draws: number;
@@ -68,8 +68,8 @@ function replay(moves: readonly MoveRecord[]): Board {
 function trendFromMoves(moves: readonly MoveRecord[], mode: Mode): TrendPoint[] {
   const points: TrendPoint[] = [{
     label: '开局',
-    value: mode === 'ai-first' ? 100 : 50,
-    certainty: mode === 'ai-first' ? 'proof' : 'estimate',
+    value: 100,
+    certainty: 'proof',
   }];
   for (const move of moves) {
     if (!shouldRecordTrend(mode === 'local', move.side)) continue;
@@ -80,6 +80,19 @@ function trendFromMoves(moves: readonly MoveRecord[], mode: Mode): TrendPoint[] 
     });
   }
   return points;
+}
+
+function certifiedPrefixIntact(certificate: RuntimeCertificate, moves: readonly MoveRecord[]) {
+  const firstMoves = moves.filter((move) => move.player === FIRST_PLAYER).sort((left, right) => left.number - right.number);
+  if (firstMoves.some((move) => move.number > 4)) return false;
+  const opponentMoves = new Map(moves
+    .filter((move) => move.player === SECOND_PLAYER)
+    .map((move) => [move.number, move.cell + 1]));
+  try {
+    return firstMoves.every((move) => certifiedMove(certificate, opponentMoves, move.number) === move.cell);
+  } catch {
+    return false;
+  }
 }
 
 function initialAiGame(): { board: Board; moves: MoveRecord[] } {
@@ -94,7 +107,7 @@ function initialAiGame(): { board: Board; moves: MoveRecord[] } {
 }
 
 function AdvantageChart({
-  points, mode, pending, analysis, analysisPlayer, hintVisible, openingHint, hintComputing,
+  points, mode, pending, analysis, analysisPlayer, hintVisible, openingHint, hintComputing, certifiedWin,
 }: {
   points: TrendPoint[];
   mode: Mode;
@@ -104,11 +117,14 @@ function AdvantageChart({
   hintVisible: boolean;
   openingHint: OpeningHint | null;
   hintComputing: boolean;
+  certifiedWin: boolean;
 }) {
   const current = points.at(-1) ?? { value: 50, certainty: 'estimate' as const, label: '开局' };
   const firstPlayerValue = mode === 'human-first' ? 100 - current.value : current.value;
-  const certainty = pending ? '正在评估' : current.certainty === 'proof' ? '策略证明' : current.certainty === 'exact' ? '精确搜索' : '近似估计';
-  const situation = pending
+  const certainty = certifiedWin ? '策略证明' : pending ? '正在评估' : current.certainty === 'proof' ? '策略证明' : current.certainty === 'exact' ? '精确搜索' : '近似估计';
+  const situation = certifiedWin
+    ? '完美应对下先手可以获胜；若有人后续失误，实战结果仍可能改变。'
+    : pending
     ? '正在计算双方完美应对下的结果…'
     : current.certainty === 'estimate'
       ? firstPlayerValue > 57 ? '近似估计：完美应对下先手局面占优；若有人后续失误，实战结果仍可能改变。' : firstPlayerValue < 43 ? '近似估计：完美应对下后手局面占优；若有人后续失误，实战结果仍可能改变。' : '近似估计：完美应对下双方接近均势；若有人后续失误，实战结果仍可能改变。'
@@ -169,13 +185,15 @@ function AdvantageChart({
       {hintVisible && !analysis && openingHint && (
         <div className={`recommendation-card ${openingHint.source === 'mcts' ? 'estimated-recommendation' : ''}`}>
           <div>
-            <span className="kicker">{openingHint.source === 'certificate' ? '必胜策略提示' : '开局提示'}</span>
+            <span className="kicker">{openingHint.source === 'certificate' ? '必胜策略提示' : openingHint.source === 'exact' ? '精确保胜提示' : '开局提示'}</span>
             <strong>格 {String(openingHint.cell + 1).padStart(2, '0')}</strong>
           </div>
-          <span className={`outcome-pill ${openingHint.source === 'certificate' ? 'winning' : 'drawing'}`}>{openingHint.source === 'certificate' ? '策略保证' : '强力估计'}</span>
+          <span className={`outcome-pill ${openingHint.source === 'mcts' ? 'drawing' : 'winning'}`}>{openingHint.source === 'certificate' ? '策略保证' : openingHint.source === 'exact' ? '可保胜' : '强力估计'}</span>
           <p>{openingHint.source === 'certificate'
             ? '直接来自已证明的先手必胜策略证书，不使用 MCTS。'
-            : `基于 ${formatInteger(openingHint.iterations)} 次 MCTS 模拟；估值 ${openingHint.estimate.toFixed(3)}。这不是可证明的最优着法。`}</p>
+            : openingHint.source === 'exact'
+              ? `证书开局后的完整 alpha-beta 精确搜索；该着法可继续保证先手获胜，搜索值 ${openingHint.value}。`
+              : `基于 ${formatInteger(openingHint.iterations)} 次 MCTS 模拟；估值 ${openingHint.estimate.toFixed(3)}。这不是可证明的最优着法。`}</p>
         </div>
       )}
       {hintVisible && !analysis && !openingHint && hintComputing && (
@@ -202,7 +220,7 @@ export function BlackHoleGame() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ScoreResult | null>(null);
   const [moveAnalysis, setMoveAnalysis] = useState<MoveAnalysis | null>(null);
-  const [mctsHint, setMctsHint] = useState<OpeningHint | null>(null);
+  const [computedHint, setComputedHint] = useState<OpeningHint | null>(null);
   const [hintComputing, setHintComputing] = useState(false);
   const [hintVisible, setHintVisible] = useState(false);
   const workerRef = useRef<Worker | null>(null);
@@ -212,24 +230,20 @@ export function BlackHoleGame() {
   const requestRef = useRef(0);
   const hintRequestRef = useRef(0);
 
+  const certifiedWin = useMemo(() => certificate ? certifiedPrefixIntact(certificate, moves) : false, [certificate, moves]);
+
   const certificateHint = useMemo<OpeningHint | null>(() => {
     const number = nextNumber(board);
-    if (!certificate || nextPlayer(board) !== FIRST_PLAYER || number > 4) return null;
+    if (!certificate || !certifiedWin || nextPlayer(board) !== FIRST_PLAYER || number > 4) return null;
     const opponentMoves = new Map(moves
       .filter((move) => move.player === SECOND_PLAYER)
       .map((move) => [move.number, move.cell + 1]));
-    const firstMoves = new Map(moves
-      .filter((move) => move.player === FIRST_PLAYER)
-      .map((move) => [move.number, move.cell + 1]));
     try {
-      for (let previous = 1; previous < number; previous += 1) {
-        if (firstMoves.get(previous) !== certifiedMove(certificate, opponentMoves, previous) + 1) return null;
-      }
-      return { cell: certifiedMove(certificate, opponentMoves, number), source: 'certificate', iterations: 0, estimate: 1 };
+      return { cell: certifiedMove(certificate, opponentMoves, number), source: 'certificate', iterations: 0, estimate: 1, value: 101 };
     } catch {
       return null;
     }
-  }, [board, certificate, moves]);
+  }, [board, certificate, certifiedWin, moves]);
 
   const createWorker = useCallback(() => {
     const worker = new AiWorker();
@@ -277,7 +291,7 @@ export function BlackHoleGame() {
     hintGenerationRef.current += 1;
     hintWorkerRef.current?.terminate();
     hintWorkerRef.current = null;
-    setMctsHint(null);
+    setComputedHint(null);
     setHintComputing(false);
     setHintVisible(false);
   }, []);
@@ -325,23 +339,25 @@ export function BlackHoleGame() {
     const userCanChoose = mode === 'local' || nextPlayer(board) === humanPlayer;
     const waitingForOpeningCertificate = nextPlayer(board) === FIRST_PLAYER && nextNumber(board) <= 4 && !certificate;
     if (thinking || evaluating || result || moveAnalysis || certificateHint || waitingForOpeningCertificate || !userCanChoose || emptyCells(board).length <= 1) return;
+    const exactCertifiedContinuation = certifiedWin && nextPlayer(board) === FIRST_PLAYER && nextNumber(board) === 5;
     const token = ++hintGenerationRef.current;
     restartHintWorker();
     const statusTimer = window.setTimeout(() => {
       if (hintGenerationRef.current === token) setHintComputing(true);
     }, 0);
     void askHintEngine({
-      kind: 'strongBestMove',
+      kind: exactCertifiedContinuation ? 'exactBestMove' : 'strongBestMove',
       board,
       player: nextPlayer(board),
       budgetMs: 1200,
     }).then((response) => {
       if (hintGenerationRef.current !== token) return;
-      setMctsHint({
+      setComputedHint({
         cell: response.move!,
-        source: 'mcts',
+        source: exactCertifiedContinuation ? 'exact' : 'mcts',
         iterations: response.iterations ?? 0,
         estimate: response.estimate ?? 0,
+        value: response.value ?? 0,
       });
       setHintComputing(false);
     }).catch(() => {
@@ -355,7 +371,7 @@ export function BlackHoleGame() {
         hintWorkerRef.current = null;
       }
     };
-  }, [askHintEngine, board, certificate, certificateHint, evaluating, mode, moveAnalysis, restartHintWorker, result, thinking]);
+  }, [askHintEngine, board, certificate, certificateHint, certifiedWin, evaluating, mode, moveAnalysis, restartHintWorker, result, thinking]);
 
   const analyzeLegalMoves = useCallback(async (position: Board): Promise<MoveAnalysis> => {
     const player = nextPlayer(position);
@@ -628,7 +644,7 @@ export function BlackHoleGame() {
   const canUndo = moves.length > (mode === 'ai-first' ? 1 : 0);
   const waitingForOpeningCertificate = currentPlayer === FIRST_PLAYER && nextNumber(board) <= 4 && !certificate;
   const canShowHint = canPlay && !thinking && !evaluating && !result && !waitingForOpeningCertificate;
-  const openingHint = certificateHint ?? mctsHint;
+  const openingHint = certificateHint ?? computedHint;
   const recommendedCell = hintVisible ? moveAnalysis?.recommendedCell ?? openingHint?.cell : undefined;
 
   let cellIndex = 0;
@@ -696,6 +712,7 @@ export function BlackHoleGame() {
             hintVisible={hintVisible}
             openingHint={openingHint}
             hintComputing={hintComputing}
+            certifiedWin={certifiedWin}
           />
 
           <section className="rules-card">
