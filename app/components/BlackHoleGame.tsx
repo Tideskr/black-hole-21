@@ -58,9 +58,9 @@ function trendFromMoves(moves: readonly MoveRecord[], mode: Mode): TrendPoint[] 
     certainty: mode === 'ai-first' ? 'proof' : 'estimate',
   }];
   for (const move of moves) {
-    if (!shouldRecordTrend(mode === 'local', move.side, move.player)) continue;
+    if (!shouldRecordTrend(mode === 'local', move.side)) continue;
     points.push({
-      label: mode === 'local' ? `第 ${move.number} 回合` : `AI ${move.number}`,
+      label: mode === 'local' ? `${move.player === FIRST_PLAYER ? '玩家一' : '玩家二'} ${move.number}` : `AI ${move.number}`,
       value: move.evaluation,
       certainty: move.certainty,
     });
@@ -91,7 +91,7 @@ function AdvantageChart({ points, mode, pending }: { points: TrendPoint[]; mode:
   }).join(' ');
   const label = mode === 'local' ? '先手优势指数' : 'AI 胜势指数';
   const certainty = pending ? '评估中…' : current.certainty === 'proof' ? '策略保证' : current.certainty === 'exact' ? '精确搜索' : '局面估值';
-  const cadence = mode === 'local' ? '双方各走一手后更新' : 'AI 完成回应后更新';
+  const cadence = mode === 'local' ? '双方每次落子后更新' : 'AI 完成回应后更新';
   const explanation = mode === 'local'
     ? '使用潜在黑洞的邻和差衡量先手压力，不是统计胜率。'
     : '搜索结果先落入胜／和／负区间，再按终局分差表示取胜难度，不是统计胜率。';

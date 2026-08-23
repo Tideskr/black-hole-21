@@ -48,11 +48,11 @@ describe('棋盘规则', () => {
     expect(undoKeepCount(['player1', 'player2', 'player1'], true)).toBe(2);
   });
 
-  it('AI 对局只在 AI 回应后记录趋势，双人对局每完整回合记录一次', () => {
-    expect(shouldRecordTrend(false, 'human', FIRST_PLAYER)).toBe(false);
-    expect(shouldRecordTrend(false, 'ai', SECOND_PLAYER)).toBe(true);
-    expect(shouldRecordTrend(true, 'player1', FIRST_PLAYER)).toBe(false);
-    expect(shouldRecordTrend(true, 'player2', SECOND_PLAYER)).toBe(true);
+  it('AI 对局只在 AI 回应后记录趋势，双人对局每一步都记录', () => {
+    expect(shouldRecordTrend(false, 'human')).toBe(false);
+    expect(shouldRecordTrend(false, 'ai')).toBe(true);
+    expect(shouldRecordTrend(true, 'player1')).toBe(true);
+    expect(shouldRecordTrend(true, 'player2')).toBe(true);
   });
 });
 
