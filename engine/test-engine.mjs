@@ -57,6 +57,14 @@ try {
   engine.HEAP8.set(Int8Array.from(certifiedTail), pointer);
   engine._exact_best_move(pointer, -1);
   if (engine._get_last_value() !== 102) throw new Error(`已知证书残局应为先手胜 102，实际为 ${engine._get_last_value()}`);
+
+  // 线上反馈的双人残局：后手仅有格 2/5 两种选择，格 2 可逼和，格 5 会输。
+  const localDrawBoard = [-1, 0, -10, 9, 0, -9, 6, 8, -8, -7, 2, 5, 7, -6, -4, 1, 3, 4, -5, -3, -2];
+  engine.HEAP8.set(Int8Array.from(localDrawBoard), pointer);
+  const localBestMove = engine._exact_best_move(pointer, 1);
+  if (localBestMove !== 1 || engine._get_last_value() !== 0) {
+    throw new Error(`双人残局应由后手下格 2 逼和，实际 move=${localBestMove + 1}, value=${engine._get_last_value()}`);
+  }
   console.log('C/WASM 引擎通过 12 个随机残局与终局符号对照。');
 } finally {
   engine._free(pointer);

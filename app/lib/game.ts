@@ -60,6 +60,11 @@ export function shouldRecordTrend(localGame: boolean, side: string): boolean {
   return localGame || side === 'ai';
 }
 
+export function shouldUseExactEvaluation(board: Board): boolean {
+  const remaining = emptyCells(board).length;
+  return remaining > 1 && remaining <= 10;
+}
+
 export function place(board: Board, cell: number, player: Player): Board {
   if (cell < 0 || cell >= 21 || board[cell] !== 0) throw new Error(`格 ${cell + 1} 不能落子`);
   const result = [...board];

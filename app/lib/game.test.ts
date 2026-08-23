@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   FIRST_PLAYER, SECOND_PLAYER, NEIGHBORS, advantageIndex, certifiedMove, emptyBoard,
-  nextNumber, place, scoreBoard, shouldRecordTrend, undoKeepCount, type RuntimeCertificate,
+  nextNumber, place, scoreBoard, shouldRecordTrend, shouldUseExactEvaluation,
+  undoKeepCount, type RuntimeCertificate,
 } from './game';
 
 describe('棋盘规则', () => {
@@ -53,6 +54,12 @@ describe('棋盘规则', () => {
     expect(shouldRecordTrend(false, 'ai')).toBe(true);
     expect(shouldRecordTrend(true, 'player1')).toBe(true);
     expect(shouldRecordTrend(true, 'player2')).toBe(true);
+  });
+
+  it('双人残局从剩余 10 格开始使用精确评估', () => {
+    expect(shouldUseExactEvaluation(Array(21).fill(0))).toBe(false);
+    expect(shouldUseExactEvaluation([...Array(11).fill(-1), ...Array(10).fill(0)])).toBe(true);
+    expect(shouldUseExactEvaluation([...Array(20).fill(-1), 0])).toBe(false);
   });
 });
 

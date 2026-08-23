@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FIRST_PLAYER, SECOND_PLAYER, NEIGHBORS, ROWS, advantageIndex, certifiedMove, emptyBoard,
   emptyCells, formatInteger, nextNumber, nextPlayer, outcomeLabel, place,
-  scoreBoard, shouldRecordTrend, undoKeepCount, type Board, type Player, type RuntimeCertificate, type ScoreResult,
+  scoreBoard, shouldRecordTrend, shouldUseExactEvaluation, undoKeepCount,
+  type Board, type Player, type RuntimeCertificate, type ScoreResult,
 } from '../lib/game';
 import type { AiRequest, AiResponse } from '../workers/protocol';
 import AiWorker from '../workers/ai.worker?worker';
@@ -132,6 +133,7 @@ export function BlackHoleGame() {
   const [trend, setTrend] = useState<TrendPoint[]>(() => trendFromMoves(initial.moves, 'ai-first'));
   const [certificate, setCertificate] = useState<RuntimeCertificate | null>(null);
   const [thinking, setThinking] = useState(false);
+  const [evaluating, setEvaluating] = useState(false);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
   const [detail, setDetail] = useState('策略证书 · 第 1 手固定在格 01');
   const [error, setError] = useState<string | null>(null);
@@ -193,6 +195,7 @@ export function BlackHoleGame() {
     setError(null);
     setResult(null);
     setThinking(false);
+    setEvaluating(false);
     setThinkingSeconds(0);
     if (selectedMode === 'ai-first') {
       const next = initialAiGame();
@@ -279,8 +282,35 @@ export function BlackHoleGame() {
     }
   }, [askEngine, certificate, finishIfNeeded]);
 
+  const runLocalEvaluation = useCallback(async (position: Board, history: MoveRecord[], gameGeneration: number) => {
+    setEvaluating(true);
+    setDetail('正在精确评估双人残局…');
+    try {
+      const response = await askEngine({
+        kind: 'exactBestMove',
+        board: position,
+        player: nextPlayer(position),
+      });
+      if (generationRef.current !== gameGeneration) return;
+      const value = response.value ?? 0;
+      const evaluation = exactIndex(value, FIRST_PLAYER);
+      const nextHistory = history.map((move, index) => index === history.length - 1
+        ? { ...move, evaluation, certainty: 'exact' as const }
+        : move);
+      const outcome = value > 0 ? '完美应对下先手可胜' : value < 0 ? '完美应对下后手可胜' : '完美应对下可逼平';
+      setMoves(nextHistory);
+      setTrend(trendFromMoves(nextHistory, 'local'));
+      setDetail(`精确残局 · ${formatInteger(response.nodes ?? 0)} 节点 · ${formatInteger(response.cutoffs ?? 0)} 次剪枝 · ${outcome}`);
+      setEvaluating(false);
+    } catch (cause) {
+      if (generationRef.current !== gameGeneration) return;
+      setEvaluating(false);
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [askEngine]);
+
   const humanMove = useCallback((cell: number) => {
-    if (thinking || result || board[cell] !== 0) return;
+    if (thinking || evaluating || result || board[cell] !== 0) return;
     const currentPlayer = nextPlayer(board);
     const humanPlayer: Player = mode === 'ai-first' ? SECOND_PLAYER : FIRST_PLAYER;
     if (mode !== 'local' && currentPlayer !== humanPlayer) return;
@@ -292,13 +322,18 @@ export function BlackHoleGame() {
     const side: MoveSide = mode === 'local' ? (currentPlayer === FIRST_PLAYER ? 'player1' : 'player2') : 'human';
     const certainty: Certainty = mode === 'ai-first' ? 'proof' : 'estimate';
     const nextHistory = [...moves, { side, player: currentPlayer, number, cell, source: 'human' as const, evaluation, certainty }];
+    const exactLocalEvaluation = mode === 'local' && shouldUseExactEvaluation(nextBoard);
     setBoard(nextBoard);
     setMoves(nextHistory);
-    setTrend(trendFromMoves(nextHistory, mode));
+    if (!exactLocalEvaluation) setTrend(trendFromMoves(nextHistory, mode));
     setError(null);
-    if (finishIfNeeded(nextBoard) || mode === 'local') return;
+    if (finishIfNeeded(nextBoard)) return;
+    if (mode === 'local') {
+      if (exactLocalEvaluation) void runLocalEvaluation(nextBoard, nextHistory, generationRef.current);
+      return;
+    }
     void runAi(nextBoard, nextHistory, generationRef.current, mode);
-  }, [board, finishIfNeeded, mode, moves, result, runAi, thinking]);
+  }, [board, evaluating, finishIfNeeded, mode, moves, result, runAi, runLocalEvaluation, thinking]);
 
   const undo = useCallback(() => {
     const minimum = mode === 'ai-first' ? 1 : 0;
@@ -313,6 +348,7 @@ export function BlackHoleGame() {
     setResult(null);
     setError(null);
     setThinking(false);
+    setEvaluating(false);
     setThinkingSeconds(0);
     setDetail(mode === 'local' ? '已撤销上一手' : '已回到你的上一个决策点');
   }, [mode, moves, restartWorker]);
@@ -329,9 +365,11 @@ export function BlackHoleGame() {
     ? '出现错误'
     : result
       ? winnerText
-      : thinking
-        ? `AI 思考中 · ${thinkingSeconds.toFixed(1)} 秒`
-        : `${playerName(currentPlayer)}落子 · 数字 ${nextNumber(board)}`;
+      : evaluating
+        ? '正在精确评估双人残局…'
+        : thinking
+          ? `AI 思考中 · ${thinkingSeconds.toFixed(1)} 秒`
+          : `${playerName(currentPlayer)}落子 · 数字 ${nextNumber(board)}`;
   const canPlay = mode === 'local' || currentPlayer === humanPlayer;
   const canUndo = moves.length > (mode === 'ai-first' ? 1 : 0);
 
@@ -351,7 +389,7 @@ export function BlackHoleGame() {
       </div>
 
       <div className="game-status" role="status" aria-live="polite">
-        <span className={`status-dot ${thinking ? 'thinking' : ''}`} />
+        <span className={`status-dot ${thinking || evaluating ? 'thinking' : ''}`} />
         <strong>{statusText}</strong>
         <span>{mode === 'ai-first' ? 'AI 使用已证明的先手必胜策略' : mode === 'human-first' ? '实验性强力防守 · 尚无后手不败证明' : '本地双人 · 玩家一先手'}</span>
       </div>
@@ -376,7 +414,7 @@ export function BlackHoleGame() {
                       className={`cell ${pieceClass} ${isHole ? 'hole' : ''} ${scoreNeighbors.has(cell) ? 'scored-neighbor' : ''}`}
                       key={cell}
                       aria-label={label}
-                      disabled={thinking || Boolean(result) || value !== 0 || !canPlay}
+                      disabled={thinking || evaluating || Boolean(result) || value !== 0 || !canPlay}
                       onClick={() => humanMove(cell)}
                     >
                       {isHole ? <span className="hole-label">黑洞</span> : value !== 0 ? <><small>{ownerName}</small>{Math.abs(value)}</> : <span>{String(cell + 1).padStart(2, '0')}</span>}
@@ -389,7 +427,7 @@ export function BlackHoleGame() {
         </div>
 
         <aside className="game-rail">
-          <AdvantageChart points={trend} mode={mode} pending={thinking} />
+          <AdvantageChart points={trend} mode={mode} pending={thinking || evaluating} />
 
           <section className="rules-card">
             <span className="kicker">怎么玩</span>
