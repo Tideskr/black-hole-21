@@ -40,3 +40,4 @@ next-env.d.ts
 /engine/dist/*.js
 /engine/dist/*.wasm
 !/engine/dist/*.d.ts
+/emsdk-cache/
