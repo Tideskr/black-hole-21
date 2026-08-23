@@ -27,6 +27,7 @@ interface MoveRecord {
 }
 
 interface TrendPoint { label: string; value: number; certainty: Certainty; }
+interface EstimatedHint { cell: number; iterations: number; estimate: number; }
 interface MoveAnalysis {
   wins: number;
   draws: number;
@@ -93,13 +94,16 @@ function initialAiGame(): { board: Board; moves: MoveRecord[] } {
 }
 
 function AdvantageChart({
-  points, mode, pending, analysis, analysisPlayer,
+  points, mode, pending, analysis, analysisPlayer, hintVisible, estimatedHint, hintComputing,
 }: {
   points: TrendPoint[];
   mode: Mode;
   pending: boolean;
   analysis: MoveAnalysis | null;
   analysisPlayer: string;
+  hintVisible: boolean;
+  estimatedHint: EstimatedHint | null;
+  hintComputing: boolean;
 }) {
   const width = 320;
   const height = 104;
@@ -112,7 +116,7 @@ function AdvantageChart({
   const label = mode === 'local' ? '先手理论结果' : 'AI 理论结果';
   const certainty = pending ? '评估中…' : current.certainty === 'proof' ? '策略保证' : current.certainty === 'exact' ? '精确搜索' : mode === 'local' ? '近似估值（虚线）' : 'MCTS 估值（虚线）';
   const cadence = mode === 'local' ? '双方每次落子后更新' : 'AI 完成回应后更新';
-  const exactExplanation = '精确结果固定为胜 100／和 50／负 0；尚未精确求解的前期局面以虚线显示估值。';
+  const exactExplanation = '表示双方从当前局面开始都采用最佳着法时的结果；任何一方后续失误都可能改变实际结局。精确胜／和／负固定为 100／50／0，前期近似值用虚线表示。';
   const safeMoves = analysis ? analysis.wins + analysis.draws : 0;
   const safetyRate = analysis ? Math.round((safeMoves / analysis.total) * 100) : null;
   const aiMargin = analysis && analysis.bestFirstValue > 0 ? Math.max(0, analysis.bestFirstValue - 100) : null;
@@ -123,7 +127,7 @@ function AdvantageChart({
   return (
     <section className="advantage-card" aria-label={`${label} ${current.value}`}>
       <div className="advantage-heading">
-        <div><span className="kicker">实时局势</span><strong>{label}</strong></div>
+        <div><span className="kicker">实时局势 · 双方完美应对</span><strong>{label}</strong></div>
         <div className="advantage-number"><b>{current.certainty === 'estimate' ? '≈' : ''}{current.value}</b><small>/100</small></div>
       </div>
       <div className="chart-wrap">
@@ -175,7 +179,7 @@ function AdvantageChart({
           <p>{safeMoves}/{analysis.total} 种合法着法至少可以保和。</p>
         </div>
       )}
-      {analysis && (
+      {hintVisible && analysis && (
         <div className="recommendation-card">
           <div>
             <span className="kicker">最优招法</span>
@@ -185,6 +189,22 @@ function AdvantageChart({
           <p>{analysis.opponentReplies > 0
             ? `对手 ${analysis.opponentMistakes}/${analysis.opponentReplies} 种回应会偏离最佳防守；相同比例时选择失误代价更大的分支。`
             : '这是最后一手，无后续回应分支。'}</p>
+        </div>
+      )}
+      {hintVisible && !analysis && estimatedHint && (
+        <div className="recommendation-card estimated-recommendation">
+          <div>
+            <span className="kicker">开局提示</span>
+            <strong>格 {String(estimatedHint.cell + 1).padStart(2, '0')}</strong>
+          </div>
+          <span className="outcome-pill drawing">强力估计</span>
+          <p>基于 {formatInteger(estimatedHint.iterations)} 次 MCTS 模拟；估值 {estimatedHint.estimate.toFixed(3)}。这不是可证明的最优着法，进入精确残局后会自动升级。</p>
+        </div>
+      )}
+      {hintVisible && !analysis && !estimatedHint && hintComputing && (
+        <div className="recommendation-card estimated-recommendation pending-recommendation">
+          <div><span className="kicker">开局提示</span><strong>正在后台计算…</strong></div>
+          <p>你仍可以继续落子；提示完成后会自动显示。</p>
         </div>
       )}
     </section>
@@ -205,9 +225,15 @@ export function BlackHoleGame() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ScoreResult | null>(null);
   const [moveAnalysis, setMoveAnalysis] = useState<MoveAnalysis | null>(null);
+  const [estimatedHint, setEstimatedHint] = useState<EstimatedHint | null>(null);
+  const [hintComputing, setHintComputing] = useState(false);
+  const [hintVisible, setHintVisible] = useState(false);
   const workerRef = useRef<Worker | null>(null);
+  const hintWorkerRef = useRef<Worker | null>(null);
   const generationRef = useRef(0);
+  const hintGenerationRef = useRef(0);
   const requestRef = useRef(0);
+  const hintRequestRef = useRef(0);
 
   const createWorker = useCallback(() => {
     const worker = new AiWorker();
@@ -215,14 +241,24 @@ export function BlackHoleGame() {
     return worker;
   }, []);
 
+  const createHintWorker = useCallback(() => {
+    const worker = new AiWorker();
+    hintWorkerRef.current = worker;
+    return worker;
+  }, []);
+
   useEffect(() => {
     createWorker();
+    createHintWorker();
     fetch('/generated/strategy-v6.json')
       .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
       .then((data: RuntimeCertificate) => setCertificate(data))
       .catch((cause) => setError(`策略证书加载失败：${cause instanceof Error ? cause.message : String(cause)}`));
-    return () => workerRef.current?.terminate();
-  }, [createWorker]);
+    return () => {
+      workerRef.current?.terminate();
+      hintWorkerRef.current?.terminate();
+    };
+  }, [createHintWorker, createWorker]);
 
   useEffect(() => {
     if (!thinking) return;
@@ -235,6 +271,20 @@ export function BlackHoleGame() {
     workerRef.current?.terminate();
     createWorker();
   }, [createWorker]);
+
+  const restartHintWorker = useCallback(() => {
+    hintWorkerRef.current?.terminate();
+    createHintWorker();
+  }, [createHintWorker]);
+
+  const clearHint = useCallback(() => {
+    hintGenerationRef.current += 1;
+    hintWorkerRef.current?.terminate();
+    hintWorkerRef.current = null;
+    setEstimatedHint(null);
+    setHintComputing(false);
+    setHintVisible(false);
+  }, []);
 
   const askEngine = useCallback((request: Omit<AiRequest, 'id'>) => new Promise<AiResponse>((resolve, reject) => {
     const worker = workerRef.current ?? createWorker();
@@ -254,6 +304,60 @@ export function BlackHoleGame() {
     worker.addEventListener('error', onError);
     worker.postMessage({ ...request, id } satisfies AiRequest);
   }), [createWorker]);
+
+  const askHintEngine = useCallback((request: Omit<AiRequest, 'id'>) => new Promise<AiResponse>((resolve, reject) => {
+    const worker = hintWorkerRef.current ?? createHintWorker();
+    const id = ++hintRequestRef.current;
+    const onMessage = (event: MessageEvent<AiResponse>) => {
+      if (event.data.id !== id) return;
+      cleanup();
+      if (event.data.ok) resolve(event.data);
+      else reject(new Error(event.data.error ?? '提示搜索失败'));
+    };
+    const onError = (event: ErrorEvent) => { cleanup(); reject(new Error(event.message || '提示搜索线程异常')); };
+    const cleanup = () => {
+      worker.removeEventListener('message', onMessage);
+      worker.removeEventListener('error', onError);
+    };
+    worker.addEventListener('message', onMessage);
+    worker.addEventListener('error', onError);
+    worker.postMessage({ ...request, id } satisfies AiRequest);
+  }), [createHintWorker]);
+
+  useEffect(() => {
+    const humanPlayer: Player = mode === 'ai-first' ? SECOND_PLAYER : FIRST_PLAYER;
+    const userCanChoose = mode === 'local' || nextPlayer(board) === humanPlayer;
+    if (thinking || evaluating || result || moveAnalysis || !userCanChoose || emptyCells(board).length <= 1) return;
+    const token = ++hintGenerationRef.current;
+    restartHintWorker();
+    const statusTimer = window.setTimeout(() => {
+      if (hintGenerationRef.current === token) setHintComputing(true);
+    }, 0);
+    void askHintEngine({
+      kind: 'strongBestMove',
+      board,
+      player: nextPlayer(board),
+      budgetMs: 1200,
+    }).then((response) => {
+      if (hintGenerationRef.current !== token) return;
+      setEstimatedHint({
+        cell: response.move!,
+        iterations: response.iterations ?? 0,
+        estimate: response.estimate ?? 0,
+      });
+      setHintComputing(false);
+    }).catch(() => {
+      if (hintGenerationRef.current === token) setHintComputing(false);
+    });
+    return () => {
+      window.clearTimeout(statusTimer);
+      if (hintGenerationRef.current === token) {
+        hintGenerationRef.current += 1;
+        hintWorkerRef.current?.terminate();
+        hintWorkerRef.current = null;
+      }
+    };
+  }, [askHintEngine, board, evaluating, mode, moveAnalysis, restartHintWorker, result, thinking]);
 
   const analyzeLegalMoves = useCallback(async (position: Board): Promise<MoveAnalysis> => {
     const player = nextPlayer(position);
@@ -324,6 +428,7 @@ export function BlackHoleGame() {
   const startGame = useCallback((selectedMode: Mode = mode) => {
     generationRef.current += 1;
     restartWorker();
+    clearHint();
     setMode(selectedMode);
     setError(null);
     setResult(null);
@@ -343,7 +448,7 @@ export function BlackHoleGame() {
       setTrend(trendFromMoves([], selectedMode));
       setDetail(selectedMode === 'local' ? '双人对战 · 由玩家一先手' : '实验模式 · AI 前中盘使用约 2 秒强力搜索');
     }
-  }, [mode, restartWorker]);
+  }, [clearHint, mode, restartWorker]);
 
   const finishIfNeeded = useCallback((nextBoard: Board) => {
     const score = scoreBoard(nextBoard);
@@ -461,6 +566,7 @@ export function BlackHoleGame() {
     const currentPlayer = nextPlayer(board);
     const humanPlayer: Player = mode === 'ai-first' ? SECOND_PLAYER : FIRST_PLAYER;
     if (mode !== 'local' && currentPlayer !== humanPlayer) return;
+    clearHint();
     const number = nextNumber(board);
     const nextBoard = place(board, cell, currentPlayer);
     const perspective = perspectiveFor(mode);
@@ -481,13 +587,14 @@ export function BlackHoleGame() {
       return;
     }
     void runAi(nextBoard, nextHistory, generationRef.current, mode);
-  }, [board, evaluating, finishIfNeeded, mode, moves, result, runAi, runLocalEvaluation, thinking]);
+  }, [board, clearHint, evaluating, finishIfNeeded, mode, moves, result, runAi, runLocalEvaluation, thinking]);
 
   const undo = useCallback(() => {
     const minimum = mode === 'ai-first' ? 1 : 0;
     if (moves.length <= minimum) return;
     generationRef.current += 1;
     restartWorker();
+    clearHint();
     const keep = undoKeepCount(moves.map((move) => move.side), mode === 'local', minimum);
     const nextMoves = moves.slice(0, keep);
     setBoard(replay(nextMoves));
@@ -500,7 +607,7 @@ export function BlackHoleGame() {
     setEvaluating(false);
     setThinkingSeconds(0);
     setDetail(mode === 'local' ? '已撤销上一手' : '已回到你的上一个决策点');
-  }, [mode, moves, restartWorker]);
+  }, [clearHint, mode, moves, restartWorker]);
 
   const humanPlayer: Player = mode === 'ai-first' ? SECOND_PLAYER : FIRST_PLAYER;
   const scoreNeighbors = result ? new Set(NEIGHBORS[result.hole]) : new Set<number>();
@@ -521,6 +628,8 @@ export function BlackHoleGame() {
           : `${playerName(currentPlayer)}落子 · 数字 ${nextNumber(board)}`;
   const canPlay = mode === 'local' || currentPlayer === humanPlayer;
   const canUndo = moves.length > (mode === 'ai-first' ? 1 : 0);
+  const canShowHint = canPlay && !thinking && !evaluating && !result;
+  const recommendedCell = hintVisible ? moveAnalysis?.recommendedCell ?? estimatedHint?.cell : undefined;
 
   let cellIndex = 0;
   return (
@@ -532,6 +641,7 @@ export function BlackHoleGame() {
           <button className={mode === 'local' ? 'selected' : ''} onClick={() => startGame('local')}>双人</button>
         </div>
         <div className="game-actions">
+          <button className="hint-game" disabled={!canShowHint} onClick={() => setHintVisible((visible) => !visible)}>{hintVisible ? '隐藏提示' : '查看提示'}</button>
           <button className="undo-game" disabled={!canUndo} onClick={undo}>撤销</button>
           <button className="new-game" onClick={() => startGame()}>重新开始</button>
         </div>
@@ -556,7 +666,7 @@ export function BlackHoleGame() {
                   const isHole = result?.hole === cell;
                   const owner = value === 0 ? null : value < 0 ? FIRST_PLAYER : SECOND_PLAYER;
                   const ownerName = owner ? playerName(owner) : '';
-                  const isRecommended = !result && moveAnalysis?.recommendedCell === cell;
+                  const isRecommended = !result && recommendedCell === cell;
                   const label = isHole ? '黑洞' : value === 0 ? `第 ${cell + 1} 格，空${isRecommended ? '，推荐着法' : ''}` : `${ownerName}，数字 ${Math.abs(value)}`;
                   const pieceClass = owner === FIRST_PLAYER ? 'first-piece' : owner === SECOND_PLAYER ? 'second-piece' : '';
                   return (
@@ -583,6 +693,9 @@ export function BlackHoleGame() {
             pending={thinking || evaluating}
             analysis={moveAnalysis}
             analysisPlayer={playerName(currentPlayer)}
+            hintVisible={hintVisible}
+            estimatedHint={estimatedHint}
+            hintComputing={hintComputing}
           />
 
           <section className="rules-card">
