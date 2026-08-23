@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   FIRST_PLAYER, SECOND_PLAYER, NEIGHBORS, advantageIndex, certifiedMove, emptyBoard,
-  nextNumber, place, scoreBoard, undoKeepCount, type RuntimeCertificate,
+  nextNumber, place, scoreBoard, shouldRecordTrend, undoKeepCount, type RuntimeCertificate,
 } from './game';
 
 describe('棋盘规则', () => {
@@ -46,6 +46,13 @@ describe('棋盘规则', () => {
     expect(undoKeepCount(['ai', 'human', 'ai'], false, 1)).toBe(1);
     expect(undoKeepCount(['human', 'ai'], false)).toBe(0);
     expect(undoKeepCount(['player1', 'player2', 'player1'], true)).toBe(2);
+  });
+
+  it('AI 对局只在 AI 回应后记录趋势，双人对局每完整回合记录一次', () => {
+    expect(shouldRecordTrend(false, 'human', FIRST_PLAYER)).toBe(false);
+    expect(shouldRecordTrend(false, 'ai', SECOND_PLAYER)).toBe(true);
+    expect(shouldRecordTrend(true, 'player1', FIRST_PLAYER)).toBe(false);
+    expect(shouldRecordTrend(true, 'player2', SECOND_PLAYER)).toBe(true);
   });
 });
 

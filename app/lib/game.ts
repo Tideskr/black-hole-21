@@ -56,6 +56,10 @@ export function undoKeepCount(sides: readonly string[], localGame: boolean, mini
   return lastHuman < 0 ? minimum : Math.max(minimum, lastHuman);
 }
 
+export function shouldRecordTrend(localGame: boolean, side: string, player: Player): boolean {
+  return localGame ? player === SECOND_PLAYER : side === 'ai';
+}
+
 export function place(board: Board, cell: number, player: Player): Board {
   if (cell < 0 || cell >= 21 || board[cell] !== 0) throw new Error(`格 ${cell + 1} 不能落子`);
   const result = [...board];

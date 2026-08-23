@@ -105,6 +105,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .chart-label.bottom { bottom: 9px; }
 .chart-caption { display: flex; justify-content: space-between; color: var(--muted); font-size: 9px; }
 .chart-caption span:first-child { color: var(--blue); font-weight: 800; }
+.chart-caption span.pending { animation: pulse-text 1s ease-in-out infinite; }
 .advantage-card > p, .rules-card p, .search-card p, .result-card p { margin: 11px 0 0; color: var(--muted); font-size: 10px; line-height: 1.65; }
 .rules-card p b { color: var(--ink); }
 .search-card { min-height: 84px; }
@@ -165,6 +166,7 @@ button { -webkit-tap-highlight-color: transparent; }
 @keyframes piece-in { from { transform: scale(.15); } 72% { transform: scale(1.1); } to { transform: scale(1); } }
 @keyframes black-hole { 0%, 100% { transform: scale(1); opacity: .85; } 50% { transform: scale(.18); opacity: .1; } }
 @keyframes pulse { 50% { transform: scale(1.5); opacity: .45; } }
+@keyframes pulse-text { 50% { opacity: .42; } }
 
 @media (max-width: 930px) {
   .game-stage { grid-template-columns: 1fr; }
