@@ -1,18 +1,22 @@
-# v6 策略证书
+# v6 strategy certificate
 
-`certificates/v6/proof.json` 是网站开局策略的唯一来源。它记录固定 `H1=1` 后的量词见证：
+`certificates/v6/proof.json` is the website opening strategy's sole source of truth. With `H1=1` fixed, it records witnesses for:
 
 ```text
-∀ A1 ∃ H2 ∀ A2 ∃ H3 ∀ A3 ∃ H4
+for every A1, there exists H2;
+for every A2, there exists H3;
+for every A3, there exists H4.
 ```
 
-每个 `H4` 后的局面均由完整 alpha-beta 搜索验证为先手可强制获胜。JSON 是计算机辅助证明的策略见证；独立复核仍需运行 `proof/prove_first_player.py` 重新完成残局搜索。
+Every selected H4 position was then verified by exact alpha-beta search to be a forced first-player win. The JSON is a strategy witness and computation record; independently confirming every endgame result still requires rerunning `proof/prove_first_player.py`.
 
-- 策略版本：6
-- SHA-256：`f699006e057352a366f777276cc00c711464f499450d6a23521d4a61720c812b`
-- 完整首回合分支：20
-- 精确搜索调用：6,153
-- 搜索节点：33,370,517,302
-- 本地 4 核证明耗时：34 分 12 秒
+- Certificate format: `black-hole-21-first-player-opening-v1`
+- Strategy version: 6
+- SHA-256: `db99816cc75f3fc5ee50939af8cd8fdf20faf0872e10df0da4705d45d35b4cca`
+- Complete first-reply branches: 20
+- Selected opening witnesses: `20 × 18 × 16 = 5,760`
+- Exact endgame calls: 6,153
+- Search nodes: 33,370,517,302
+- Measured local four-thread time: 34 minutes 12 seconds
 
-运行 `npm run prepare:strategy` 会验证证书结构和校验值，再产生供网站读取的压缩运行时文件。生成文件不是新的事实来源。
+`npm run prepare:strategy` validates the certificate format, checksum, structure, coverage, and move legality before generating compact website assets. Generated files are not a separate source of truth.

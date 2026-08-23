@@ -113,7 +113,7 @@ export function shouldUseExactEvaluation(board: Board): boolean {
 }
 
 export function place(board: Board, cell: number, player: Player): Board {
-  if (cell < 0 || cell >= 21 || board[cell] !== 0) throw new Error(`格 ${cell + 1} 不能落子`);
+  if (cell < 0 || cell >= 21 || board[cell] !== 0) throw new Error(`Cell ${cell + 1} is not a legal move`);
   const result = [...board];
   result[cell] = player * nextNumber(board);
   return result;
@@ -141,8 +141,10 @@ export function scoreBoard(board: Board): ScoreResult | null {
 }
 
 /**
- * 把局面压缩成 0–100 的“优势指数”。它不是胜率：终局使用真实结果，
- * 未搜索局面则衡量所有潜在黑洞周围已经形成的邻和差，并按完成度收缩。
+ * Compress a position into a 0–100 advantage index. This is not a win rate:
+ * terminal positions use the actual result, while unsolved positions measure
+ * the established neighbor-sum difference around every possible black hole
+ * and shrink the signal according to game completion.
  */
 export function advantageIndex(board: Board, perspective: Player): number {
   const terminal = scoreBoard(board);
@@ -177,31 +179,31 @@ export function advantageIndex(board: Board, perspective: Player): number {
   return Math.round(Math.max(4, Math.min(96, 50 + signal * (18 + completion * 28))));
 }
 
-export function outcomeLabel(value: number, aiPlayer: Player): string {
-  if (value === 0) return '完美应对下可保和';
+export function outcomeCode(value: number, aiPlayer: Player): 'draw' | 'aiWin' | 'aiLoss' {
+  if (value === 0) return 'draw';
   const firstWins = value > 0;
   const aiWins = firstWins === (aiPlayer === FIRST_PLAYER);
-  return aiWins ? '完美应对下 AI 可胜' : '此时已无法避免落败';
+  return aiWins ? 'aiWin' : 'aiLoss';
 }
 
 export function certifiedMove(certificate: RuntimeCertificate, humanMoves: ReadonlyMap<number, number>, aiNumber: number): number {
   if (aiNumber === 1) return certificate.h1 - 1;
   const a1 = humanMoves.get(1);
-  if (!a1) throw new Error('证书查询缺少对手第 1 手');
+  if (!a1) throw new Error("The certificate lookup is missing the opponent's first move");
   const branch = certificate.fullResults[String(a1)];
-  if (!branch) throw new Error(`证书中没有 A1=${a1}`);
+  if (!branch) throw new Error(`The certificate has no A1=${a1} branch`);
   if (aiNumber === 2) return branch.h2 - 1;
   const a2 = humanMoves.get(2);
-  if (!a2) throw new Error('证书查询缺少对手第 2 手');
+  if (!a2) throw new Error("The certificate lookup is missing the opponent's second move");
   const response = branch.responsesByAi2[String(a2)];
-  if (!response) throw new Error(`证书中没有 A1=${a1}, A2=${a2}`);
+  if (!response) throw new Error(`The certificate has no A1=${a1}, A2=${a2} branch`);
   if (aiNumber === 3) return response.h3 - 1;
   const a3 = humanMoves.get(3);
-  if (!a3) throw new Error('证书查询缺少对手第 3 手');
+  if (!a3) throw new Error("The certificate lookup is missing the opponent's third move");
   const h4 = response.h4ByAi3[String(a3)];
-  if (!h4) throw new Error(`证书中没有 A1=${a1}, A2=${a2}, A3=${a3}`);
+  if (!h4) throw new Error(`The certificate has no A1=${a1}, A2=${a2}, A3=${a3} branch`);
   if (aiNumber === 4) return h4 - 1;
-  throw new Error('证书只定义第 1–4 手');
+  throw new Error('The certificate defines only moves 1 through 4');
 }
 
-export function formatInteger(value: number): string { return new Intl.NumberFormat('zh-CN').format(Math.round(value)); }
+export function formatInteger(value: number, locale = 'en-US'): string { return new Intl.NumberFormat(locale).format(Math.round(value)); }

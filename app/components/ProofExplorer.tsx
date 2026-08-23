@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { RuntimeCertificate } from '../lib/game';
+import { useI18n } from '../i18n';
 
 export function ProofExplorer() {
+  const { t } = useI18n();
   const [certificate, setCertificate] = useState<RuntimeCertificate | null>(null);
   const [a1, setA1] = useState('2');
   const [a2, setA2] = useState('');
@@ -17,23 +19,23 @@ export function ProofExplorer() {
   const ai3Options = useMemo(() => response ? Object.keys(response.h4ByAi3).sort((a, b) => Number(a) - Number(b)) : [], [response]);
   const selectedA3 = ai3Options.includes(a3) ? a3 : ai3Options[0] ?? '';
 
-  if (!certificate || !branch || !response) return <div className="proof-explorer loading">正在读取证书…</div>;
+  if (!certificate || !branch || !response) return <div className="proof-explorer loading">{t('proof.loading')}</div>;
   return (
     <div className="proof-explorer">
       <div className="explorer-heading">
-        <span className="kicker">证书分支查询</span>
-        <h2>沿着一条分支查看见证</h2>
+        <span className="kicker">{t('proof.explorerKicker')}</span>
+        <h2>{t('proof.explorerTitle')}</h2>
       </div>
       <div className="branch-flow">
-        <label><span>AI · H1</span><strong>01</strong></label>
-        <label><span>对手 · A1</span><span className="select-shell"><select aria-label="选择对手第一手" value={a1} onChange={(event) => { setA1(event.target.value); setA2(''); setA3(''); }}>{Object.keys(certificate.fullResults).sort((a, b) => Number(a) - Number(b)).map((cell) => <option key={cell}>{cell}</option>)}</select><i aria-hidden="true">⌄</i></span></label>
-        <label><span>AI · H2</span><strong>{String(branch.h2).padStart(2, '0')}</strong></label>
-        <label><span>对手 · A2</span><span className="select-shell"><select aria-label="选择对手第二手" value={selectedA2} onChange={(event) => { setA2(event.target.value); setA3(''); }}>{ai2Options.map((cell) => <option key={cell}>{cell}</option>)}</select><i aria-hidden="true">⌄</i></span></label>
-        <label><span>AI · H3</span><strong>{String(response.h3).padStart(2, '0')}</strong></label>
-        <label><span>对手 · A3</span><span className="select-shell"><select aria-label="选择对手第三手" value={selectedA3} onChange={(event) => setA3(event.target.value)}>{ai3Options.map((cell) => <option key={cell}>{cell}</option>)}</select><i aria-hidden="true">⌄</i></span></label>
-        <label className="winning-witness"><span>AI · H4</span><strong>{String(response.h4ByAi3[selectedA3]).padStart(2, '0')}</strong></label>
+        <label><span>{t('proof.aiH1')}</span><strong>01</strong></label>
+        <label><span>{t('proof.opponentA1')}</span><span className="select-shell"><select aria-label={t('proof.selectA1')} value={a1} onChange={(event) => { setA1(event.target.value); setA2(''); setA3(''); }}>{Object.keys(certificate.fullResults).sort((a, b) => Number(a) - Number(b)).map((cell) => <option key={cell}>{cell}</option>)}</select><i aria-hidden="true">⌄</i></span></label>
+        <label><span>{t('proof.aiH2')}</span><strong>{String(branch.h2).padStart(2, '0')}</strong></label>
+        <label><span>{t('proof.opponentA2')}</span><span className="select-shell"><select aria-label={t('proof.selectA2')} value={selectedA2} onChange={(event) => { setA2(event.target.value); setA3(''); }}>{ai2Options.map((cell) => <option key={cell}>{cell}</option>)}</select><i aria-hidden="true">⌄</i></span></label>
+        <label><span>{t('proof.aiH3')}</span><strong>{String(response.h3).padStart(2, '0')}</strong></label>
+        <label><span>{t('proof.opponentA3')}</span><span className="select-shell"><select aria-label={t('proof.selectA3')} value={selectedA3} onChange={(event) => setA3(event.target.value)}>{ai3Options.map((cell) => <option key={cell}>{cell}</option>)}</select><i aria-hidden="true">⌄</i></span></label>
+        <label className="winning-witness"><span>{t('proof.aiH4')}</span><strong>{String(response.h4ByAi3[selectedA3]).padStart(2, '0')}</strong></label>
       </div>
-      <p>从这个 H4 局面开始，证明器已完整搜索到终局并确认先手可以强制获胜。</p>
+      <p>{t('proof.explorerBody')}</p>
     </div>
   );
 }

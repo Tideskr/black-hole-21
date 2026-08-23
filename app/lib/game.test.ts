@@ -7,15 +7,15 @@ import {
   undoKeepCount, type RuntimeCertificate,
 } from './game';
 
-describe('棋盘规则', () => {
-  it('角、边与中心的邻接关系正确', () => {
+describe('board rules', () => {
+  it('defines correct corner, edge, and center adjacency', () => {
     expect(NEIGHBORS[0]).toEqual([1, 2]);
     expect(NEIGHBORS[15]).toEqual([10, 16]);
     expect(NEIGHBORS[4]).toEqual([1, 2, 3, 5, 7, 8]);
     expect(NEIGHBORS.every((neighbors, cell) => neighbors.every((neighbor) => NEIGHBORS[neighbor].includes(cell)))).toBe(true);
   });
 
-  it('双方依次放置同一个数字', () => {
+  it('gives both players the same number in sequence', () => {
     let board = emptyBoard();
     expect(nextNumber(board)).toBe(1);
     board = place(board, 0, FIRST_PLAYER);
@@ -24,7 +24,7 @@ describe('棋盘规则', () => {
     expect(nextNumber(board)).toBe(2);
   });
 
-  it('邻和较小者获胜，和相等时平局', () => {
+  it('awards the win to the lower neighboring sum and draws on equality', () => {
     const base = Array.from({ length: 21 }, (_, cell) => cell === 0 ? 0 : -1);
     let board = [...base]; board[1] = -3; board[2] = 5;
     expect(scoreBoard(board)).toMatchObject({ firstSum: 3, secondSum: 5, winner: FIRST_PLAYER });
@@ -34,7 +34,7 @@ describe('棋盘规则', () => {
     expect(scoreBoard(board)).toMatchObject({ firstSum: 4, secondSum: 4, winner: 0 });
   });
 
-  it('优势指数有界，并在终局严格反映胜负方向', () => {
+  it('bounds the advantage index and exactly reflects terminal outcomes', () => {
     expect(advantageIndex(emptyBoard(), FIRST_PLAYER)).toBe(50);
     const board = Array.from({ length: 21 }, (_, cell) => cell === 0 ? 0 : -1);
     board[1] = -3;
@@ -43,27 +43,27 @@ describe('棋盘规则', () => {
     expect(advantageIndex(board, SECOND_PLAYER)).toBe(0);
   });
 
-  it('AI 对局撤回到上一个真人决策点，双人对局只撤一手', () => {
+  it('undoes to the previous human decision against AI and one move locally', () => {
     expect(undoKeepCount(['ai', 'human', 'ai'], false, 1)).toBe(1);
     expect(undoKeepCount(['human', 'ai'], false)).toBe(0);
     expect(undoKeepCount(['player1', 'player2', 'player1'], true)).toBe(2);
   });
 
-  it('AI 对局只在 AI 回应后记录趋势，双人对局每一步都记录', () => {
+  it('records AI games after AI replies and local games after every move', () => {
     expect(shouldRecordTrend(false, 'human')).toBe(false);
     expect(shouldRecordTrend(false, 'ai')).toBe(true);
     expect(shouldRecordTrend(true, 'player1')).toBe(true);
     expect(shouldRecordTrend(true, 'player2')).toBe(true);
   });
 
-  it('双人残局从剩余 12 格开始使用精确评估', () => {
+  it('uses exact evaluation once a local endgame has at most 12 empty cells', () => {
     expect(shouldUseExactEvaluation(Array(21).fill(0))).toBe(false);
     expect(shouldUseExactEvaluation([...Array(8).fill(-1), ...Array(13).fill(0)])).toBe(false);
     expect(shouldUseExactEvaluation([...Array(9).fill(-1), ...Array(12).fill(0)])).toBe(true);
     expect(shouldUseExactEvaluation([...Array(20).fill(-1), 0])).toBe(false);
   });
 
-  it('最优提示先保胜负等级，再选择对手最容易失误的分支', () => {
+  it('preserves outcome class before preferring branches that invite mistakes', () => {
     const recommendation = recommendTrapMove([
       { cell: 2, guaranteedValue: 0, opponentValues: [0, 0, 101] },
       { cell: 5, guaranteedValue: 0, opponentValues: [0, 102, 101] },
@@ -83,11 +83,11 @@ describe('棋盘规则', () => {
   });
 });
 
-describe('v6 证书', () => {
+describe('v6 certificate', () => {
   const path = resolve(process.cwd(), 'public/generated/strategy-v6.json');
   const certificate = JSON.parse(readFileSync(path, 'utf8')) as RuntimeCertificate;
 
-  it('完整覆盖 20 × 18 × 16 个对手分支', () => {
+  it('covers all 20 × 18 × 16 opponent branches', () => {
     expect(Object.keys(certificate.fullResults)).toHaveLength(20);
     let mappings = 0;
     for (const branch of Object.values(certificate.fullResults)) {
@@ -100,7 +100,7 @@ describe('v6 证书', () => {
     expect(mappings).toBe(5760);
   });
 
-  it('每个证书着法都落在尚未占据的合法格', () => {
+  it('places every certificate move in a legal unoccupied cell', () => {
     for (const [a1Key, branch] of Object.entries(certificate.fullResults)) {
       const a1 = Number(a1Key);
       expect(certifiedMove(certificate, new Map([[1, a1]]), 2) + 1).toBe(branch.h2);

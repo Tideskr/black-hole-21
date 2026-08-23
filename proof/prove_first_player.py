@@ -1,7 +1,8 @@
-"""Black Hole（21）先手策略的计算机辅助证明器。
+"""Computer-assisted first-player strategy prover for Black Hole (21).
 
-证明目标：在用户限定的前三、四手策略内，先手是否能强制获胜。
-AI 节点取“所有回应”，先手节点取“存在一个合法候选”。
+The prover asks whether the first player can force a win within the configured
+opening candidate order. Opponent nodes quantify over every legal response;
+first-player nodes need one legal witness.
 """
 
 from __future__ import annotations
@@ -24,6 +25,12 @@ CELL_COUNT = 21
 AI = 1
 FIRST = -1
 STRATEGY_VERSION = 6
+CERTIFICATE_FORMAT = "black-hole-21-first-player-opening-v1"
+PROOF_STATEMENT = (
+    "With H1 fixed at cell 1: for every A1 there exists H2; for every A2 "
+    "there exists H3; for every A3 there exists H4; and exact minimax from "
+    "the resulting position is a forced first-player win."
+)
 
 COORDS = [(row, col) for row in range(SIDE) for col in range(row + 1)]
 INDEX = {coord: i for i, coord in enumerate(COORDS)}
@@ -63,7 +70,8 @@ def _make_distances():
 
 
 DISTANCES = _make_distances()
-# 每个角的邻格顺序：下方两个角先沿底边，再沿斜边；顶角按字典序。
+# Corner guard order: for each lower corner, try the bottom edge before the
+# diagonal edge. The top corner uses lexicographic order.
 CORNER_GUARDS = {
     INDEX[(0, 0)]: (INDEX[(1, 0)], INDEX[(1, 1)]),
     INDEX[(SIDE - 1, 0)]: (INDEX[(SIDE - 1, 1)], INDEX[(SIDE - 2, 0)]),
@@ -79,7 +87,7 @@ def empty_cells(board):
 
 
 def cell_name(cell):
-    """人类可读编号使用 1..21。"""
+    """Return the human-readable 1..21 cell number."""
     return cell + 1
 
 
@@ -92,14 +100,14 @@ def board_text(board):
             if value > 0:
                 values.append(f"A{value}")
             elif value < 0:
-                values.append(f"先{-value}")
+                values.append(f"H{-value}")
             else:
                 values.append("·")
         rows.append(" " * (SIDE - row - 1) * 2 + "  ".join(values))
     return "\n".join(rows)
 
 
-# 三角形的 6 个旋转／镜像，用于把完全等价的残局合并缓存。
+# The triangle's six rotations/reflections merge equivalent endgames in cache.
 def _make_symmetries():
     transforms = []
     for permutation in itertools.permutations((0, 1, 2)):
@@ -134,19 +142,20 @@ def canonical_board(board):
     return min(variants)
 
 
-# ---------- 用户策略的形式化 ----------
+# ---------- Formalized opening strategy ----------
 
 def first_move(board):
-    """第一手：按字典序选择第一个角。"""
+    """Move one: choose the lexicographically first corner."""
     assert all(value == 0 for value in board)
     return CORNERS[0]
 
 
 def second_moves(board):
-    """第二手候选，顺序严格发生在 AI2 之前。
+    """Move-two candidates, ordered before the opponent's second move.
 
-    AI1 占角时取最后一角；否则把 2 放在 1 旁边。两个邻格都空时，
-    先尝试离 AI1 较远者，再以字典序破同分；另一个是合法回退。
+    If A1 occupies a corner, take the remaining corner. Otherwise place 2 next
+    to 1. When both guards are empty, prefer the one farther from A1, break ties
+    lexicographically, and retain the other as a legal fallback.
     """
     assert board[CORNERS[0]] == -1
     ai1 = next(cell for cell, value in enumerate(board) if value == 1)
@@ -154,7 +163,7 @@ def second_moves(board):
         return [corner for corner in CORNERS if board[corner] == 0]
     candidates = [cell for cell in CORNER_GUARDS[CORNERS[0]] if board[cell] == 0]
     candidates = sorted(candidates, key=lambda cell: (-DISTANCES[ai1][cell], cell))
-    # AI1 位于中轴时，2、3 两格镜像等价；只保留一个代表。
+    # When A1 lies on the symmetry axis, cells 2 and 3 are equivalent; retain one.
     if REFLECTION[ai1] == ai1 and len(candidates) == 2:
         return candidates[:1]
     return candidates
@@ -168,7 +177,7 @@ def _append_empty(board, result, seen, cells):
 
 
 def _rank_empty_corners(board):
-    """空角按污染少、空邻格多、离 AI 远、字典序排列。"""
+    """Rank empty corners by contamination, free guards, AI distance, then cell."""
     ai_cells = [cell for cell, value in enumerate(board) if value > 0]
 
     def key(corner):
@@ -182,12 +191,12 @@ def _rank_empty_corners(board):
 
 
 def _rank_human_corners(board):
-    # 我方数字用负数保存，因此 -3、-2、-1 正好是从大到小。
+    # First-player values are negative, so -3, -2, -1 is descending by number.
     return sorted((corner for corner in CORNERS if board[corner] < 0), key=lambda c: (board[c], c))
 
 
 def _append_remaining_by_geometry(board, result, seen):
-    """最终兜底：剩余角、边界格、内部格；同类按字典序。"""
+    """Final fallback: remaining corners, boundary cells, then interior cells."""
     for degree in (2, 4, 6):
         _append_empty(
             board,
@@ -198,36 +207,36 @@ def _append_remaining_by_geometry(board, result, seen):
 
 
 def third_moves(board):
-    """第三手：立即抢角 → 干净空角守格 → 己方角 → 空角 → 全盘兜底。"""
+    """Move three: urgent corner, clean guard, owned corner, empty corner, fallback."""
     result, seen = [], set()
     empty_corners = _rank_empty_corners(board)
     ai_has_corner = any(board[corner] > 0 for corner in CORNERS)
 
-    # 若 AI 占了两个远角中的一个，第一候选是剩下的唯一空角。
+    # If AI occupies one lower corner, first try the only remaining empty corner.
     if ai_has_corner and len(empty_corners) == 1:
         _append_empty(board, result, seen, empty_corners)
 
-    # AI 尚未占角时优先经营最干净的空角；每角先底边守格、后斜边守格。
+    # If AI owns no corner, develop the cleanest one; try bottom-edge guard first.
     for corner in empty_corners:
         _append_empty(board, result, seen, CORNER_GUARDS[corner])
 
-    # AI1 已占角、H2 占第三角的分支：先贴数字较大的己方角。
+    # When A1 and H2 occupy corners, first guard the larger owned corner value.
     for corner in _rank_human_corners(board):
         _append_empty(board, result, seen, CORNER_GUARDS[corner])
 
-    # 守角格均不能保证获胜时，允许主动占空角。
+    # If no guard guarantees a win, allow direct occupation of an empty corner.
     _append_empty(board, result, seen, empty_corners)
     _append_remaining_by_geometry(board, result, seen)
     return result
 
 
 def fourth_moves(board, third_move):
-    """第四手：抢角响应 → 同角 → 其他角 → 边界 → 内部，最终不漏合法着。"""
+    """Move four: corner response, same corner, other corners, boundary, interior."""
     result, seen = [], set()
     empty_corners = _rank_empty_corners(board)
     ai_has_corner = any(board[corner] > 0 for corner in CORNERS)
 
-    # AI3 刚占一个远角时，优先立即占最后一个空角。
+    # If A3 just took a lower corner, immediately prefer the last empty corner.
     if ai_has_corner and len(empty_corners) == 1:
         _append_empty(board, result, seen, empty_corners)
 
@@ -240,12 +249,12 @@ def fourth_moves(board, third_move):
         if third_move in NEIGHBORS[corner] and corner not in same_anchors
     )
 
-    # 补第 3 手经营的同一个角，再尝试直接占这个角。
+    # Complete the corner developed on move three, then try occupying it directly.
     for corner in same_anchors:
         _append_empty(board, result, seen, CORNER_GUARDS[corner])
     _append_empty(board, result, seen, same_anchors)
 
-    # 转向其他干净空角，再转向其他己方角。
+    # Continue with other clean empty corners, then other owned corners.
     other_empty = [corner for corner in empty_corners if corner not in same_anchors]
     for corner in other_empty:
         _append_empty(board, result, seen, CORNER_GUARDS[corner])
@@ -258,7 +267,7 @@ def fourth_moves(board, third_move):
     return result
 
 
-# ---------- Numba 精确残局搜索 ----------
+# ---------- Exact Numba endgame search ----------
 
 @njit(nogil=True)
 def _empty_count_nb(board):
@@ -281,7 +290,8 @@ def _terminal_value_nb(board, neighbors):
         neighbor = neighbors[hole, k]
         if neighbor >= 0:
             diff += board[neighbor]
-    # AI 邻格和 - 先手邻格和：负数表示先手获胜。
+    # Signed sum is opponent neighbor sum minus first-player neighbor sum.
+    # The returned value is negative exactly when the first player wins.
     if diff < 0:
         return 100 - diff
     if diff > 0:
@@ -309,8 +319,8 @@ def _mean_hole_diff_nb(board, neighbors):
 def _fill_ordered_moves_nb(board, player, number, neighbors, moves, scores):
     base_total = 0
 
-    # 当前所有空格作为黑洞时的差值总和。旧版对每个候选落子都重新
-    # 扫描整盘；下面用等价增量式把 O(E^2*6) 降为 O(E*6)。
+    # Sum the score difference with every empty cell treated as the black hole.
+    # The incremental update below replaces the old O(E^2*6) rescan with O(E*6).
     for hole in range(CELL_COUNT):
         if board[hole] == 0:
             for k in range(6):
@@ -330,9 +340,9 @@ def _fill_ordered_moves_nb(board, player, number, neighbors, moves, scores):
                     if board[neighbor] == 0:
                         empty_neighbors += 1
 
-            # 放下 move 后：move 不再是黑洞，故删掉它原来的邻和；其余
-            # 相邻空格的邻和各增加 player*number。所有候选分母相同，
-            # 排序时无需做浮点除法。
+            # Once occupied, move is no longer a possible hole, so remove its old
+            # neighbor sum. Every adjacent empty hole gains player*number. All
+            # candidates share a denominator, so sorting needs no float division.
             scores[size] = (
                 base_total
                 - old_diff_at_move
@@ -362,7 +372,7 @@ def _fill_ordered_moves_nb(board, player, number, neighbors, moves, scores):
 
 @njit(nogil=True)
 def _ordered_moves_nb(board, player, number, neighbors):
-    """测试用包装器；正式递归使用按深度复用的缓冲区。"""
+    """Test wrapper; production recursion reuses depth-indexed buffers."""
     moves = np.empty(CELL_COUNT, dtype=np.int8)
     scores = np.empty(CELL_COUNT, dtype=np.int32)
     size = _fill_ordered_moves_nb(board, player, number, neighbors, moves, scores)
@@ -447,7 +457,7 @@ _cache_waits = 0
 
 
 def _solve_canonical(canonical):
-    """单航班缓存：同一残局同时只允许一个线程执行精确搜索。"""
+    """Single-flight cache: only one thread solves a given endgame at a time."""
     global _cache_hits, _cache_misses, _cache_waits
     while True:
         with _cache_lock:
@@ -464,7 +474,7 @@ def _solve_canonical(canonical):
                 break
             _cache_waits += 1
 
-        # 另一个线程正在算同一残局；不占 CPU，完成后回到缓存读取。
+        # Another thread owns this solve. Wait without consuming CPU, then retry.
         event.wait()
 
     try:
@@ -489,7 +499,7 @@ def exact_value_after_four(board):
     result, computed = _solve_canonical(canonical)
     if computed:
         return result
-    # 缓存命中不重复计入本轮实际搜索节点数。
+    # Cache hits do not add the same search nodes to this run twice.
     return result[0], 0, 0
 
 
@@ -503,7 +513,7 @@ def cache_stats():
         }
 
 
-# ---------- AND–OR 证明任务 ----------
+# ---------- AND-OR proof tasks ----------
 
 def task_key(ai1):
     return str(cell_name(ai1))
@@ -514,7 +524,7 @@ def mirror_cell_number(number):
 
 
 def mirror_pass_result(result):
-    """把一个已通过的 AI1 策略证书镜像成另一半棋盘的证书。"""
+    """Reflect a passing A1 strategy certificate onto the other half-board."""
     assert result["passed"]
     mirrored_responses = {}
     for ai2_text, response in result["responses_by_ai2"].items():
@@ -539,7 +549,7 @@ def mirror_pass_result(result):
 
 
 def _verify_after_ai2(board):
-    """在 H1,A1,H2,A2 固定后验证 ∃H3 ∀A3 ∃H4。"""
+    """After fixing H1,A1,H2,A2, verify exists H3, for all A3, exists H4."""
     refutations = []
     exact_calls = 0
     exact_nodes = 0
@@ -592,7 +602,7 @@ def _verify_after_ai2(board):
 
 
 def verify_ai1(ai1):
-    """验证固定 AI1 后，是否存在一个 H2 能同时应对所有 AI2。"""
+    """For a fixed A1, verify that one H2 covers every A2 response."""
     base = [0] * CELL_COUNT
     h1 = first_move(base)
     base[h1] = -1
@@ -604,7 +614,7 @@ def verify_ai1(ai1):
     total_nodes = 0
     h2_refutations = []
 
-    # H2 在 AI2 之前选择；每个 H2 必须覆盖 AI2 的全部回应。
+    # H2 is selected before A2 and must cover every legal A2 response.
     for h2 in second_moves(base):
         board = base.copy()
         board[h2] = -2
@@ -671,12 +681,24 @@ def _save_checkpoint(path, data):
     temporary.replace(path)
 
 
+def certificate_payload(results, full_results=None):
+    payload = {
+        "certificate_format": CERTIFICATE_FORMAT,
+        "proof_statement": PROOF_STATEMENT,
+        "strategy_version": STRATEGY_VERSION,
+        "results": results,
+    }
+    if full_results is not None:
+        payload["full_results"] = full_results
+    return payload
+
+
 def run_proof(
     workers=None,
     checkpoint_path="/content/black_hole_proof_checkpoint_v6.json",
     previous_checkpoint_path="/content/black_hole_proof_checkpoint_v5.json",
 ):
-    """运行完整证明；可重复调用并从 checkpoint 继续。"""
+    """Run the full proof, resuming from a checkpoint when available."""
     workers = workers or max(1, min(4, os.cpu_count() or 1))
     checkpoint = Path(checkpoint_path)
     all_tasks = generate_tasks()
@@ -684,14 +706,14 @@ def run_proof(
         data = json.loads(checkpoint.read_text(encoding="utf-8"))
         if data.get("strategy_version") == STRATEGY_VERSION:
             results = data.get("results", {})
-            print(f"读取断点：已有 {len(results)} 个任务。")
+            print(f"Loaded checkpoint with {len(results)} completed tasks.")
         else:
             results = {}
-            print("发现旧策略断点，已忽略；本次将按新版策略重新计算。")
+            print("Ignored a checkpoint from a different strategy version.")
     else:
         results = {}
 
-    # v6 只做等价优化，策略候选与 v5 相同；已通过的 v5 证书可安全迁移。
+    # v6 changes only equivalent optimizations; passing v5 witnesses remain valid.
     migrated = 0
     previous = Path(previous_checkpoint_path) if previous_checkpoint_path else None
     if previous and previous.exists():
@@ -713,18 +735,15 @@ def run_proof(
                     results[key] = mirror_pass_result(old_result)
                     migrated += 1
             if migrated:
-                _save_checkpoint(checkpoint, {
-                    "strategy_version": STRATEGY_VERSION,
-                    "results": results,
-                })
-                print(f"从 v5 断点迁移了 {migrated} 个已通过的镜像代表任务。")
+                _save_checkpoint(checkpoint, certificate_payload(results))
+                print(f"Migrated {migrated} passing representative tasks from v5.")
 
     existing_failures = [result for result in results.values() if not result["passed"]]
     if existing_failures:
-        print("断点中已经存在反例，无需继续搜索。")
+        print("The checkpoint already contains a counterexample; stopping.")
         return False, existing_failures[0]
 
-    # 先用只有两格的残局触发 Numba 编译，避免多个线程同时编译。
+    # Warm up Numba on a two-cell endgame before starting worker threads.
     warm = np.zeros(CELL_COUNT, dtype=np.int16)
     player = FIRST
     number = 1
@@ -736,10 +755,10 @@ def run_proof(
     _exact_value_nb(warm, player, NB_NEIGHBORS)
 
     pending = [ai1 for ai1 in all_tasks if task_key(ai1) not in results]
-    print(f"总任务 {len(all_tasks)}；待运行 {len(pending)}；CPU线程 {workers}。")
-    print("11个中轴镜像代表覆盖全部20种 AI1；通过后自动生成另一侧策略表。")
-    print("每个任务固定 AI1，并在 AI2 落子前选定一个能覆盖其全部回应的 H2。")
-    print("GPU未使用：递归 alpha-beta 的分支和剪枝高度不规则，CPU更合适。")
+    print(f"Total tasks: {len(all_tasks)}; pending: {len(pending)}; CPU threads: {workers}.")
+    print("Eleven reflection representatives cover all 20 A1 moves; passing witnesses are mirrored automatically.")
+    print("Each task fixes A1 and selects one H2 before A2 that must cover every A2 reply.")
+    print("GPU disabled: recursive alpha-beta has irregular branching and pruning, so CPU execution is a better fit.")
 
     start = time.perf_counter()
     completed_now = 0
@@ -755,40 +774,37 @@ def run_proof(
             key = task_key(ai1)
             results[key] = result
             completed_now += 1
-            _save_checkpoint(checkpoint, {
-                "strategy_version": STRATEGY_VERSION,
-                "results": results,
-            })
+            _save_checkpoint(checkpoint, certificate_payload(results))
 
             elapsed = time.perf_counter() - start
             rate = completed_now / elapsed if elapsed else 0.0
             remaining = len(pending) - completed_now
             eta = remaining / rate if rate else math.inf
-            label = "通过" if result["passed"] else "反例"
+            label = "passed" if result["passed"] else "counterexample"
             mirror_ai1 = REFLECTION[ai1]
             task_label = str(cell_name(ai1))
             if mirror_ai1 != ai1:
-                task_label += f"/{cell_name(mirror_ai1)}(镜像)"
+                task_label += f"/{cell_name(mirror_ai1)}(reflection)"
             print(
                 f"[{len(results)}/{len(all_tasks)}] AI1={task_label}：{label}；"
-                f"选定H2={result.get('h2', '无')}；本轮ETA {eta/60:.1f}分钟"
+                f"selected H2={result.get('h2', 'none')}; run ETA {eta/60:.1f} minutes"
             )
 
             if not result["passed"] and first_failure is None:
                 first_failure = result
-                # 已经足以证伪；取消尚未开始的任务。
+                # One counterexample refutes the strategy; cancel unstarted tasks.
                 for other in futures:
                     other.cancel()
                 break
 
     if first_failure is not None:
-        print("\n策略被证伪。最先发现的反例前缀：")
+        print("\nStrategy refuted. First counterexample prefix:")
         print(json.dumps(first_failure, ensure_ascii=False, indent=2))
         return False, first_failure
 
     failed = [result for result in results.values() if not result["passed"]]
     if failed:
-        print("断点中已经存在反例。")
+        print("The checkpoint contains a counterexample.")
         return False, failed[0]
 
     if len(results) == len(all_tasks):
@@ -799,17 +815,13 @@ def run_proof(
             mirror_ai1 = REFLECTION[ai1]
             if mirror_ai1 != ai1:
                 full_results[task_key(mirror_ai1)] = mirror_pass_result(result)
-        _save_checkpoint(checkpoint, {
-            "strategy_version": STRATEGY_VERSION,
-            "results": results,
-            "full_results": full_results,
-        })
-        print("\n全部分支通过：在上述形式化规则下，先手策略得到计算机辅助证明。")
-        print(f"11个代表任务已展开为 {len(full_results)} 项完整 AI1 应对表。")
-        print(f"精确残局缓存：{cache_stats()}")
+        _save_checkpoint(checkpoint, certificate_payload(results, full_results))
+        print("\nAll branches passed: the formalized first-player strategy is computer-assisted proven.")
+        print(f"Expanded 11 representative tasks into {len(full_results)} complete A1 response tables.")
+        print(f"Exact endgame cache: {cache_stats()}")
         return True, full_results
 
-    print("本次运行未完成；再次调用 run_proof() 将从断点继续。")
+    print("This run is incomplete; call run_proof() again to resume from the checkpoint.")
     return None, results
 
 
@@ -843,37 +855,37 @@ def self_check():
     board[h1] = -1
     assert h1 == 0
 
-    # AI1 在左侧且不占角：2 先走离它较远的第 3 格，再回退第 2 格。
+    # A1 is on the left and not a corner: try the farther guard cell 3, then 2.
     board[3] = 1
     assert [cell_name(move) for move in second_moves(board)] == [3, 2]
 
-    # AI1 在中轴第 5 格时，H2=2 与 H2=3 镜像等价，只保留第 2 格。
+    # With A1 on axis cell 5, H2=2 and H2=3 are reflections; keep cell 2.
     board = [0] * CELL_COUNT
     board[0], board[4] = -1, 1
     assert [cell_name(move) for move in second_moves(board)] == [2]
 
-    # AI1 占第 16 格角：H2 必须占第 21 格角。
+    # If A1 occupies corner 16, H2 must occupy corner 21.
     board = [0] * CELL_COUNT
     board[0], board[15] = -1, 1
     assert [cell_name(move) for move in second_moves(board)] == [21]
 
-    # 新开局：H1=1,A1=2,H2=3,A2=17。21 是干净角，第三手先尝试
-    # 它的底边守角格 20，再尝试斜边守角格 15。
+    # Opening H1=1,A1=2,H2=3,A2=17: corner 21 is clean, so move three tries
+    # its bottom-edge guard 20 before its diagonal guard 15.
     board = [0] * CELL_COUNT
     board[0], board[1], board[2], board[16] = -1, 1, -2, 2
     h3_candidates = [cell_name(move) for move in third_moves(board)]
     assert h3_candidates[:2] == [20, 15]
     assert sorted(h3_candidates) == [cell_name(cell) for cell in empty_cells(board)]
 
-    # 已知困难局面：H3=20,A3=11。贴角与占角之后必须继续回退到
-    # 边界格 4；所有合法 H4 都必须恰好出现一次。
+    # Known difficult prefix H3=20,A3=11: after guards and corners, the order
+    # must reach boundary cell 4; every legal H4 must appear exactly once.
     board[19], board[10] = -3, 3
     h4_candidates = [cell_name(move) for move in fourth_moves(board, 19)]
     assert h4_candidates[:2] == [15, 21]
     assert 4 in h4_candidates
     assert sorted(h4_candidates) == [cell_name(cell) for cell in empty_cells(board)]
     assert len(h4_candidates) == len(set(h4_candidates))
-    return "自检通过：11个镜像代表、合法量词顺序、分层回退和全候选覆盖均正常。"
+    return "Self-check passed: 11 reflections, legal quantifier order, layered fallbacks, and complete candidates."
 
 
 if __name__ == "__main__":

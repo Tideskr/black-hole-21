@@ -44,26 +44,26 @@ try {
     engine.HEAP8.set(Int8Array.from(board), pointer);
     const move = engine._exact_best_move(pointer, player);
     const actual = engine._get_last_value();
-    if (actual !== expected || board[move] !== 0) throw new Error(`WASM 对照失败：sample=${sample}, expected=${expected}, actual=${actual}, move=${move}`);
+    if (actual !== expected || board[move] !== 0) throw new Error(`WASM cross-check failed: sample=${sample}, expected=${expected}, actual=${actual}, move=${move}`);
   }
 
   const scoreBoard = Array(21).fill(-1);
   scoreBoard[0] = 0; scoreBoard[1] = -3; scoreBoard[2] = 5;
   engine.HEAP8.set(Int8Array.from(scoreBoard), pointer);
-  if (engine._score_diff(pointer) !== 2) throw new Error('C 计分符号错误');
+  if (engine._score_diff(pointer) !== 2) throw new Error('C score sign is incorrect');
 
   const certifiedTail = Array(21).fill(0);
   for (const [cell, value] of [[1,-1],[2,1],[3,-2],[4,2],[20,-3],[5,3],[21,-4],[6,4]]) certifiedTail[cell - 1] = value;
   engine.HEAP8.set(Int8Array.from(certifiedTail), pointer);
   engine._exact_best_move(pointer, -1);
-  if (engine._get_last_value() !== 102) throw new Error(`已知证书残局应为先手胜 102，实际为 ${engine._get_last_value()}`);
+  if (engine._get_last_value() !== 102) throw new Error(`Known certificate endgame should be first-player win 102, got ${engine._get_last_value()}`);
 
-  // 线上反馈的双人残局：后手仅有格 2/5 两种选择，格 2 可逼和，格 5 会输。
+  // Reported local endgame: the second player can draw on cell 2 but loses on 5.
   const localDrawBoard = [-1, 0, -10, 9, 0, -9, 6, 8, -8, -7, 2, 5, 7, -6, -4, 1, 3, 4, -5, -3, -2];
   engine.HEAP8.set(Int8Array.from(localDrawBoard), pointer);
   const localBestMove = engine._exact_best_move(pointer, 1);
   if (localBestMove !== 1 || engine._get_last_value() !== 0) {
-    throw new Error(`双人残局应由后手下格 2 逼和，实际 move=${localBestMove + 1}, value=${engine._get_last_value()}`);
+    throw new Error(`Second player should force a draw on cell 2; got move=${localBestMove + 1}, value=${engine._get_last_value()}`);
   }
 
   const toleranceBoard = [-1, -3, 2, 3, -4, 4, 0, 0, 0, 0, -5, 0, 0, 0, 0, -2, 0, 0, 0, 5, 1];
@@ -80,10 +80,10 @@ try {
     else toleranceCounts.losses += 1;
   }
   if (toleranceCounts.wins !== 0 || toleranceCounts.draws !== 6 || toleranceCounts.losses !== 5) {
-    throw new Error(`着法容错率回归失败：${JSON.stringify(toleranceCounts)}`);
+    throw new Error(`Move-tolerance regression failed: ${JSON.stringify(toleranceCounts)}`);
   }
 
-  // 真人先手反馈前缀：证书第 4 手格 6 可保胜，而格 2 只能保和。
+  // Reported human-first prefix: H4=6 forces a win, while H4=2 only draws.
   const humanFirstPrefix = Array(21).fill(0);
   for (const [cell, value] of [[1,-1],[21,1],[16,-2],[20,2],[17,-3],[15,3]]) humanFirstPrefix[cell - 1] = value;
   for (const [h4, expected] of [[6, 101], [2, 0]]) {
@@ -92,10 +92,10 @@ try {
     engine.HEAP8.set(Int8Array.from(child), pointer);
     engine._exact_best_move(pointer, 1);
     if (engine._get_last_value() !== expected) {
-      throw new Error(`真人先手第 4 手回归失败：h4=${h4}, expected=${expected}, actual=${engine._get_last_value()}`);
+      throw new Error(`Human-first fourth-move regression failed: h4=${h4}, expected=${expected}, actual=${engine._get_last_value()}`);
     }
   }
-  console.log('C/WASM 引擎通过 12 个随机残局与终局符号对照。');
+  console.log('C/WASM engine passed 12 random endgame and terminal-sign cross-checks.');
 } finally {
   engine._free(pointer);
 }

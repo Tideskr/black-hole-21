@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FIRST_PLAYER, SECOND_PLAYER, NEIGHBORS, ROWS, advantageIndex, certifiedMove, emptyBoard,
-  emptyCells, formatInteger, nextNumber, nextPlayer, outcomeLabel, place,
+  emptyCells, formatInteger, nextNumber, nextPlayer, outcomeCode, place,
   recommendTrapMove, scoreBoard, shouldRecordTrend, shouldUseExactEvaluation, undoKeepCount,
   type Board, type Player, type RuntimeCertificate, type ScoreResult,
 } from '../lib/game';
 import type { AiRequest, AiResponse } from '../workers/protocol';
 import AiWorker from '../workers/ai.worker?worker';
+import { useI18n, type TranslationKey, type Translator } from '../i18n';
 
 type Mode = 'ai-first' | 'human-first' | 'local';
 type MoveSource = 'certificate' | 'exact' | 'mcts' | 'human';
@@ -28,6 +29,11 @@ interface MoveRecord {
 
 interface TrendPoint { label: string; value: number; certainty: Certainty; }
 interface OpeningHint { cell: number; source: 'certificate' | 'exact' | 'mcts'; iterations: number; estimate: number; value: number; }
+interface UiMessage {
+  key: TranslationKey;
+  variables?: Record<string, string | number>;
+  nested?: Record<string, TranslationKey>;
+}
 interface MoveAnalysis {
   wins: number;
   draws: number;
@@ -44,6 +50,12 @@ interface MoveAnalysis {
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(maximum, value));
+}
+
+function renderUiMessage(message: UiMessage, t: Translator) {
+  const variables = { ...message.variables };
+  for (const [name, key] of Object.entries(message.nested ?? {})) variables[name] = t(key);
+  return t(message.key, variables);
 }
 
 function perspectiveFor(mode: Mode): Player {
@@ -67,14 +79,14 @@ function replay(moves: readonly MoveRecord[]): Board {
 
 function trendFromMoves(moves: readonly MoveRecord[], mode: Mode): TrendPoint[] {
   const points: TrendPoint[] = [{
-    label: '开局',
+    label: 'Opening',
     value: 100,
     certainty: 'proof',
   }];
   for (const move of moves) {
     if (!shouldRecordTrend(mode === 'local', move.side)) continue;
     points.push({
-      label: mode === 'local' ? `${move.player === FIRST_PLAYER ? '玩家一' : '玩家二'} ${move.number}` : `AI ${move.number}`,
+      label: mode === 'local' ? `${move.player === FIRST_PLAYER ? 'Player one' : 'Player two'} ${move.number}` : `AI ${move.number}`,
       value: move.evaluation,
       certainty: move.certainty,
     });
@@ -119,87 +131,88 @@ function AdvantageChart({
   hintComputing: boolean;
   certifiedWin: boolean;
 }) {
-  const current = points.at(-1) ?? { value: 50, certainty: 'estimate' as const, label: '开局' };
+  const { locale, t } = useI18n();
+  const current = points.at(-1) ?? { value: 50, certainty: 'estimate' as const, label: 'Opening' };
   const firstPlayerValue = mode === 'human-first' ? 100 - current.value : current.value;
-  const certainty = certifiedWin ? '策略证明' : pending ? '正在评估' : current.certainty === 'proof' ? '策略证明' : current.certainty === 'exact' ? '精确搜索' : '近似估计';
+  const certainty = certifiedWin ? t('situation.proof') : pending ? t('situation.pending') : current.certainty === 'proof' ? t('situation.proof') : current.certainty === 'exact' ? t('situation.exact') : t('situation.estimate');
   const situation = certifiedWin
-    ? '完美应对下先手可以获胜；若有人后续失误，实战结果仍可能改变。'
+    ? t('situation.firstWins')
     : pending
-    ? '正在计算双方完美应对下的结果…'
+    ? t('situation.calculating')
     : current.certainty === 'estimate'
-      ? firstPlayerValue > 57 ? '近似估计：完美应对下先手局面占优；若有人后续失误，实战结果仍可能改变。' : firstPlayerValue < 43 ? '近似估计：完美应对下后手局面占优；若有人后续失误，实战结果仍可能改变。' : '近似估计：完美应对下双方接近均势；若有人后续失误，实战结果仍可能改变。'
-      : firstPlayerValue > 50 ? '完美应对下先手可以获胜；若有人后续失误，实战结果仍可能改变。' : firstPlayerValue < 50 ? '完美应对下先手无法避免落败；若有人后续失误，实战结果仍可能改变。' : '完美应对下先手可以保和；若有人后续失误，实战结果仍可能改变。';
+      ? firstPlayerValue > 57 ? t('situation.estimateFirst') : firstPlayerValue < 43 ? t('situation.estimateSecond') : t('situation.estimateEven')
+      : firstPlayerValue > 50 ? t('situation.firstWins') : firstPlayerValue < 50 ? t('situation.firstLoses') : t('situation.firstDraws');
   const safeMoves = analysis ? analysis.wins + analysis.draws : 0;
   const safetyRate = analysis ? Math.round((safeMoves / analysis.total) * 100) : null;
   const aiMargin = analysis && analysis.bestFirstValue > 0 ? Math.max(0, analysis.bestFirstValue - 100) : null;
   const recommendationOutcome = analysis
-    ? analysis.recommendationValue > 0 ? '可保胜' : analysis.recommendationValue === 0 ? '可保和' : '败局难免'
+    ? analysis.recommendationValue > 0 ? t('hint.forceWin') : analysis.recommendationValue === 0 ? t('hint.forceDraw') : t('hint.lossInevitable')
     : '';
 
   return (
     <section className="advantage-card" aria-label={situation}>
       <div className="situation-summary">
-        <span className="kicker">实时局势 · {certainty}</span>
+        <span className="kicker">{t('situation.label', { certainty })}</span>
         <strong>{situation}</strong>
       </div>
       {analysis && mode === 'ai-first' && aiMargin !== null && (
         <div className="tolerance-card margin-card">
           <div className="tolerance-heading">
-            <div><span className="kicker">AI 保证分差</span><strong>完美防守下</strong></div>
-            <b>{aiMargin}<small> 分</small></b>
+            <div><span className="kicker">{t('analysis.margin')}</span><strong>{t('analysis.perfectDefense')}</strong></div>
+            <b>{aiMargin}<small>{t('analysis.points')}</small></b>
           </div>
-          <p>AI 的黑洞邻和至少比你少 {aiMargin} 分；这是精确搜索结果，不是胜率估计。</p>
+          <p>{t('analysis.marginBody', { margin: aiMargin })}</p>
         </div>
       )}
       {analysis && mode !== 'ai-first' && safetyRate !== null && (
         <div className="tolerance-card">
           <div className="tolerance-heading">
-            <div><span className="kicker">不败着法率</span><strong>{analysisPlayer}</strong></div>
+            <div><span className="kicker">{t('analysis.safeRate')}</span><strong>{analysisPlayer}</strong></div>
             <b>{safetyRate}<small>%</small></b>
           </div>
-          <div className="outcome-bar" aria-label={`${analysis.wins} 胜 ${analysis.draws} 和 ${analysis.losses} 负`}>
+          <div className="outcome-bar" aria-label={t('analysis.outcomesAria', { wins: analysis.wins, draws: analysis.draws, losses: analysis.losses })}>
             <span className="wins" style={{ width: `${analysis.wins / analysis.total * 100}%` }} />
             <span className="draws" style={{ width: `${analysis.draws / analysis.total * 100}%` }} />
             <span className="losses" style={{ width: `${analysis.losses / analysis.total * 100}%` }} />
           </div>
           <div className="outcome-counts">
-            <span><i className="win-dot" />{analysis.wins} 胜</span>
-            <span><i className="draw-dot" />{analysis.draws} 和</span>
-            <span><i className="loss-dot" />{analysis.losses} 负</span>
+            <span><i className="win-dot" />{t('analysis.winShort', { count: analysis.wins })}</span>
+            <span><i className="draw-dot" />{t('analysis.drawShort', { count: analysis.draws })}</span>
+            <span><i className="loss-dot" />{t('analysis.lossShort', { count: analysis.losses })}</span>
           </div>
-          <p>{safeMoves}/{analysis.total} 种合法着法至少可以保和。</p>
+          <p>{t('analysis.safeBody', { safe: safeMoves, total: analysis.total })}</p>
         </div>
       )}
       {hintVisible && analysis && (
         <div className="recommendation-card">
           <div>
-            <span className="kicker">最优招法</span>
-            <strong>格 {String(analysis.recommendedCell + 1).padStart(2, '0')}</strong>
+            <span className="kicker">{t('hint.bestMove')}</span>
+            <strong>{t('hint.cell', { cell: String(analysis.recommendedCell + 1).padStart(2, '0') })}</strong>
           </div>
           <span className={`outcome-pill ${analysis.recommendationValue > 0 ? 'winning' : analysis.recommendationValue === 0 ? 'drawing' : 'losing'}`}>{recommendationOutcome}</span>
           <p>{analysis.opponentReplies > 0
-            ? `对手 ${analysis.opponentMistakes}/${analysis.opponentReplies} 种回应会偏离最佳防守；相同比例时选择失误代价更大的分支。`
-            : '这是最后一手，无后续回应分支。'}</p>
+            ? t('hint.mistakes', { mistakes: analysis.opponentMistakes, replies: analysis.opponentReplies })
+            : t('hint.lastMove')}</p>
         </div>
       )}
       {hintVisible && !analysis && openingHint && (
         <div className={`recommendation-card ${openingHint.source === 'mcts' ? 'estimated-recommendation' : ''}`}>
           <div>
-            <span className="kicker">{openingHint.source === 'certificate' ? '必胜策略提示' : openingHint.source === 'exact' ? '精确保胜提示' : '开局提示'}</span>
-            <strong>格 {String(openingHint.cell + 1).padStart(2, '0')}</strong>
+            <span className="kicker">{openingHint.source === 'certificate' ? t('hint.proven') : openingHint.source === 'exact' ? t('hint.exact') : t('hint.opening')}</span>
+            <strong>{t('hint.cell', { cell: String(openingHint.cell + 1).padStart(2, '0') })}</strong>
           </div>
-          <span className={`outcome-pill ${openingHint.source === 'mcts' || openingHint.value === 0 ? 'drawing' : openingHint.value > 0 ? 'winning' : 'losing'}`}>{openingHint.source === 'certificate' ? '策略保证' : openingHint.source === 'exact' ? openingHint.value > 0 ? '可保胜' : openingHint.value === 0 ? '可保和' : '败局难免' : '强力估计'}</span>
+          <span className={`outcome-pill ${openingHint.source === 'mcts' || openingHint.value === 0 ? 'drawing' : openingHint.value > 0 ? 'winning' : 'losing'}`}>{openingHint.source === 'certificate' ? t('hint.strategyGuarantee') : openingHint.source === 'exact' ? openingHint.value > 0 ? t('hint.forceWin') : openingHint.value === 0 ? t('hint.forceDraw') : t('hint.lossInevitable') : t('hint.strongEstimate')}</span>
           <p>{openingHint.source === 'certificate'
-            ? '直接来自已证明的先手必胜策略证书，不使用 MCTS。'
+            ? t('hint.certificateBody')
             : openingHint.source === 'exact'
-              ? `完整 alpha-beta 精确搜索；该着法${openingHint.value > 0 ? '可保证先手获胜' : openingHint.value === 0 ? '可保证先手保和' : '仍无法避免先手落败'}，搜索值 ${openingHint.value}。`
-              : `基于 ${formatInteger(openingHint.iterations)} 次 MCTS 模拟；估值 ${openingHint.estimate.toFixed(3)}。这不是可证明的最优着法。`}</p>
+              ? t(openingHint.value > 0 ? 'hint.exactBodyWin' : openingHint.value === 0 ? 'hint.exactBodyDraw' : 'hint.exactBodyLoss', { value: openingHint.value })
+              : t('hint.mctsBody', { iterations: formatInteger(openingHint.iterations, locale), estimate: openingHint.estimate.toFixed(3) })}</p>
         </div>
       )}
       {hintVisible && !analysis && !openingHint && hintComputing && (
         <div className="recommendation-card estimated-recommendation pending-recommendation">
-          <div><span className="kicker">开局提示</span><strong>正在后台计算…</strong></div>
-          <p>你仍可以继续落子；提示完成后会自动显示。</p>
+          <div><span className="kicker">{t('hint.opening')}</span><strong>{t('hint.computing')}</strong></div>
+          <p>{t('hint.computingBody')}</p>
         </div>
       )}
     </section>
@@ -207,6 +220,7 @@ function AdvantageChart({
 }
 
 export function BlackHoleGame() {
+  const { locale, t } = useI18n();
   const initial = initialAiGame();
   const [mode, setMode] = useState<Mode>('ai-first');
   const [board, setBoard] = useState<Board>(initial.board);
@@ -216,8 +230,8 @@ export function BlackHoleGame() {
   const [thinking, setThinking] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
-  const [detail, setDetail] = useState('策略证书 · 第 1 手固定在格 01');
-  const [error, setError] = useState<string | null>(null);
+  const [detail, setDetail] = useState<UiMessage>({ key: 'detail.certificateFirst' });
+  const [error, setError] = useState<UiMessage | null>(null);
   const [result, setResult] = useState<ScoreResult | null>(null);
   const [moveAnalysis, setMoveAnalysis] = useState<MoveAnalysis | null>(null);
   const [computedHint, setComputedHint] = useState<OpeningHint | null>(null);
@@ -263,7 +277,7 @@ export function BlackHoleGame() {
     fetch('/generated/strategy-v6.json')
       .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
       .then((data: RuntimeCertificate) => setCertificate(data))
-      .catch((cause) => setError(`策略证书加载失败：${cause instanceof Error ? cause.message : String(cause)}`));
+      .catch((cause) => setError({ key: 'error.certificateLoad', variables: { message: cause instanceof Error ? cause.message : String(cause) } }));
     return () => {
       workerRef.current?.terminate();
       hintWorkerRef.current?.terminate();
@@ -303,9 +317,9 @@ export function BlackHoleGame() {
       if (event.data.id !== id) return;
       cleanup();
       if (event.data.ok) resolve(event.data);
-      else reject(new Error(event.data.error ?? '搜索失败'));
+      else reject(new Error(event.data.error ?? 'Search failed'));
     };
-    const onError = (event: ErrorEvent) => { cleanup(); reject(new Error(event.message || '搜索线程异常')); };
+    const onError = (event: ErrorEvent) => { cleanup(); reject(new Error(event.message || 'Search worker failed')); };
     const cleanup = () => {
       worker.removeEventListener('message', onMessage);
       worker.removeEventListener('error', onError);
@@ -322,9 +336,9 @@ export function BlackHoleGame() {
       if (event.data.id !== id) return;
       cleanup();
       if (event.data.ok) resolve(event.data);
-      else reject(new Error(event.data.error ?? '提示搜索失败'));
+      else reject(new Error(event.data.error ?? 'Hint search failed'));
     };
-    const onError = (event: ErrorEvent) => { cleanup(); reject(new Error(event.message || '提示搜索线程异常')); };
+    const onError = (event: ErrorEvent) => { cleanup(); reject(new Error(event.message || 'Hint search worker failed')); };
     const cleanup = () => {
       worker.removeEventListener('message', onMessage);
       worker.removeEventListener('error', onError);
@@ -423,7 +437,7 @@ export function BlackHoleGame() {
       guaranteedValue: branch.orientedValue,
       opponentValues: branch.opponentValues,
     })));
-    if (!recommendation) throw new Error('当前局面没有合法着法');
+    if (!recommendation) throw new Error('The current position has no legal move');
     return {
       wins: branches.filter((branch) => branch.orientedValue > 0).length,
       draws: branches.filter((branch) => branch.orientedValue === 0).length,
@@ -455,12 +469,12 @@ export function BlackHoleGame() {
       setBoard(next.board);
       setMoves(next.moves);
       setTrend(trendFromMoves(next.moves, selectedMode));
-      setDetail('策略证书 · 第 1 手固定在格 01');
+      setDetail({ key: 'detail.certificateFirst' });
     } else {
       setBoard(emptyBoard());
       setMoves([]);
       setTrend(trendFromMoves([], selectedMode));
-      setDetail(selectedMode === 'local' ? '双人对战 · 由玩家一先手' : '实验模式 · AI 前中盘使用约 2 秒强力搜索');
+      setDetail({ key: selectedMode === 'local' ? 'detail.localStart' : 'detail.experimentalStart' });
     }
   }, [clearHint, mode, restartWorker]);
 
@@ -480,23 +494,25 @@ export function BlackHoleGame() {
     setThinkingSeconds(0);
     setThinking(true);
     setMoveAnalysis(null);
-    setDetail(number <= 4 && currentMode === 'ai-first' ? `正在查询策略证书 · 第 ${number} 手` : 'AI 正在搜索…');
+    setDetail(number <= 4 && currentMode === 'ai-first'
+      ? { key: 'detail.queryCertificate', variables: { number } }
+      : { key: 'detail.aiSearching' });
     const started = performance.now();
     try {
       let move: number;
       let source: MoveSource;
-      let nextDetail: string;
+      let nextDetail: UiMessage;
       let evaluation: number;
       let certainty: Certainty;
       if (currentMode === 'ai-first' && number <= 4) {
-        if (!certificate) throw new Error('策略证书尚未加载完成');
+        if (!certificate) throw new Error('The strategy certificate has not loaded yet');
         const humanMoves = new Map(history.filter((item) => item.side === 'human').map((item) => [item.number, item.cell + 1]));
         move = certifiedMove(certificate, humanMoves, number);
         source = 'certificate';
         await new Promise((resolve) => window.setTimeout(resolve, 180));
         evaluation = 100;
         certainty = 'proof';
-        nextDetail = `策略证书 · 第 ${number} 手选择格 ${String(move + 1).padStart(2, '0')}`;
+        nextDetail = { key: 'detail.certificateMove', variables: { number, cell: String(move + 1).padStart(2, '0') } };
       } else {
         const empty = emptyCells(position).length;
         const exact = currentMode === 'ai-first' || empty <= 12 || (currentMode === 'human-first' && number === 4);
@@ -512,11 +528,27 @@ export function BlackHoleGame() {
         if (source === 'exact') {
           evaluation = exactIndex(response.value ?? 0, aiPlayer);
           certainty = 'exact';
-          nextDetail = `精确搜索 · ${formatInteger(response.nodes ?? 0)} 节点 · ${formatInteger(response.cutoffs ?? 0)} 次剪枝 · ${seconds.toFixed(2)} 秒 · ${outcomeLabel(response.value ?? 0, aiPlayer)}`;
+          const outcome = outcomeCode(response.value ?? 0, aiPlayer);
+          nextDetail = {
+            key: 'detail.exactSearch',
+            variables: {
+              nodes: formatInteger(response.nodes ?? 0, locale),
+              cutoffs: formatInteger(response.cutoffs ?? 0, locale),
+              seconds: seconds.toFixed(2),
+            },
+            nested: { outcome: outcome === 'draw' ? 'detail.canDraw' : outcome === 'aiWin' ? 'detail.aiCanWin' : 'detail.aiCannotAvoidLoss' },
+          };
         } else {
           evaluation = Math.round(clamp(50 + (response.estimate ?? 0) * 45, 4, 96));
           certainty = 'estimate';
-          nextDetail = `实验性 MCTS · ${formatInteger(response.iterations ?? 0)} 次模拟 · 估值 ${(response.estimate ?? 0).toFixed(3)} · ${seconds.toFixed(2)} 秒`;
+          nextDetail = {
+            key: 'detail.mctsSearch',
+            variables: {
+              iterations: formatInteger(response.iterations ?? 0, locale),
+              estimate: (response.estimate ?? 0).toFixed(3),
+              seconds: seconds.toFixed(2),
+            },
+          };
         }
       }
       if (generationRef.current !== gameGeneration) return;
@@ -546,14 +578,14 @@ export function BlackHoleGame() {
       if (generationRef.current !== gameGeneration) return;
       setThinking(false);
       setEvaluating(false);
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError({ key: 'error.search', variables: { message: cause instanceof Error ? cause.message : String(cause) } });
     }
-  }, [analyzeLegalMoves, askEngine, certificate, finishIfNeeded]);
+  }, [analyzeLegalMoves, askEngine, certificate, finishIfNeeded, locale]);
 
   const runLocalEvaluation = useCallback(async (position: Board, history: MoveRecord[], gameGeneration: number) => {
     setEvaluating(true);
     setMoveAnalysis(null);
-    setDetail('正在精确分析全部合法着法…');
+    setDetail({ key: 'detail.analyzing' });
     try {
       const analysis = await analyzeLegalMoves(position);
       if (generationRef.current !== gameGeneration) return;
@@ -562,18 +594,22 @@ export function BlackHoleGame() {
       const nextHistory = history.map((move, index) => index === history.length - 1
         ? { ...move, evaluation, certainty: 'exact' as const, analysis }
         : move);
-      const outcome = value > 0 ? '完美应对下先手可胜' : value < 0 ? '完美应对下后手可胜' : '完美应对下可逼平';
+      const outcome = value > 0 ? 'detail.firstCanWin' : value < 0 ? 'detail.secondCanWin' : 'detail.canDraw';
       setMoves(nextHistory);
       setTrend(trendFromMoves(nextHistory, 'local'));
       setMoveAnalysis(analysis);
-      setDetail(`精确残局 · ${formatInteger(analysis.nodes)} 节点 · ${formatInteger(analysis.cutoffs)} 次剪枝 · ${outcome}`);
+      setDetail({
+        key: 'detail.exactEndgame',
+        variables: { nodes: formatInteger(analysis.nodes, locale), cutoffs: formatInteger(analysis.cutoffs, locale) },
+        nested: { outcome },
+      });
       setEvaluating(false);
     } catch (cause) {
       if (generationRef.current !== gameGeneration) return;
       setEvaluating(false);
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError({ key: 'error.search', variables: { message: cause instanceof Error ? cause.message : String(cause) } });
     }
-  }, [analyzeLegalMoves]);
+  }, [analyzeLegalMoves, locale]);
 
   const humanMove = useCallback((cell: number) => {
     if (thinking || evaluating || result || board[cell] !== 0) return;
@@ -620,26 +656,26 @@ export function BlackHoleGame() {
     setThinking(false);
     setEvaluating(false);
     setThinkingSeconds(0);
-    setDetail(mode === 'local' ? '已撤销上一手' : '已回到你的上一个决策点');
+    setDetail({ key: mode === 'local' ? 'detail.undoLocal' : 'detail.undoAi' });
   }, [clearHint, mode, moves, restartWorker]);
 
   const humanPlayer: Player = mode === 'ai-first' ? SECOND_PLAYER : FIRST_PLAYER;
   const scoreNeighbors = result ? new Set(NEIGHBORS[result.hole]) : new Set<number>();
   const playerName = (player: Player) => {
-    if (mode === 'local') return player === FIRST_PLAYER ? '玩家一' : '玩家二';
-    return player === humanPlayer ? '你' : 'AI';
+    if (mode === 'local') return player === FIRST_PLAYER ? t('game.playerOne') : t('game.playerTwo');
+    return player === humanPlayer ? t('game.you') : t('game.ai');
   };
-  const winnerText = result ? result.winner === 0 ? '平局' : `${playerName(result.winner)}获胜` : '';
+  const winnerText = result ? result.winner === 0 ? t('game.draw') : t('game.wins', { player: playerName(result.winner) }) : '';
   const currentPlayer = nextPlayer(board);
   const statusText = error
-    ? '出现错误'
+    ? t('game.error')
     : result
       ? winnerText
       : evaluating
-        ? '正在精确分析全部合法着法…'
+        ? t('game.statusEvaluating')
         : thinking
-          ? `AI 思考中 · ${thinkingSeconds.toFixed(1)} 秒`
-          : `${playerName(currentPlayer)}落子 · 数字 ${nextNumber(board)}`;
+          ? t('game.statusThinking', { seconds: thinkingSeconds.toFixed(1) })
+          : t('game.statusTurn', { player: playerName(currentPlayer), number: nextNumber(board) });
   const canPlay = mode === 'local' || currentPlayer === humanPlayer;
   const canUndo = moves.length > (mode === 'ai-first' ? 1 : 0);
   const waitingForOpeningCertificate = currentPlayer === FIRST_PLAYER && nextNumber(board) <= 4 && !certificate;
@@ -649,31 +685,31 @@ export function BlackHoleGame() {
 
   let cellIndex = 0;
   return (
-    <section className="game-panel" aria-label="21 黑洞游戏">
+    <section className="game-panel" aria-label={t('game.label')}>
       <div className="game-toolbar">
-        <div className="mode-switch" aria-label="对局模式">
-          <button className={mode === 'ai-first' ? 'selected' : ''} onClick={() => startGame('ai-first')}>AI 先手</button>
-          <button className={mode === 'human-first' ? 'selected' : ''} onClick={() => startGame('human-first')}>你先手</button>
-          <button className={mode === 'local' ? 'selected' : ''} onClick={() => startGame('local')}>双人</button>
+        <div className="mode-switch" aria-label={t('game.modeLabel')}>
+          <button className={mode === 'ai-first' ? 'selected' : ''} onClick={() => startGame('ai-first')}>{t('game.modeAiFirst')}</button>
+          <button className={mode === 'human-first' ? 'selected' : ''} onClick={() => startGame('human-first')}>{t('game.modeHumanFirst')}</button>
+          <button className={mode === 'local' ? 'selected' : ''} onClick={() => startGame('local')}>{t('game.modeLocal')}</button>
         </div>
         <div className="game-actions">
-          <button className="hint-game" disabled={!canShowHint} onClick={() => setHintVisible((visible) => !visible)}>{hintVisible ? '隐藏提示' : '查看提示'}</button>
-          <button className="undo-game" disabled={!canUndo} onClick={undo}>撤销</button>
-          <button className="new-game" onClick={() => startGame()}>重新开始</button>
+          <button className="hint-game" disabled={!canShowHint} onClick={() => setHintVisible((visible) => !visible)}>{hintVisible ? t('game.hideHint') : t('game.showHint')}</button>
+          <button className="undo-game" disabled={!canUndo} onClick={undo}>{t('game.undo')}</button>
+          <button className="new-game" onClick={() => startGame()}>{t('game.restart')}</button>
         </div>
       </div>
 
       <div className="game-status" role="status" aria-live="polite">
         <span className={`status-dot ${thinking || evaluating ? 'thinking' : ''}`} />
         <strong>{statusText}</strong>
-        <span>{mode === 'ai-first' ? 'AI 使用已证明的先手必胜策略' : mode === 'human-first' ? '实验性强力防守 · 尚无后手不败证明' : '本地双人 · 玩家一先手'}</span>
+        <span>{t(mode === 'ai-first' ? 'game.modeProof' : mode === 'human-first' ? 'game.modeExperimental' : 'game.modeLocalDetail')}</span>
       </div>
 
-      {error && <div className="error-box">{error}<button onClick={() => startGame()}>重试</button></div>}
+      {error && <div className="error-box">{renderUiMessage(error, t)}<button onClick={() => startGame()}>{t('game.retry')}</button></div>}
 
       <div className="game-stage">
         <div className="board-column">
-          <div className="board" aria-label="三角形棋盘">
+          <div className="board" aria-label={t('game.boardLabel')}>
             {ROWS.map((count) => (
               <div className="board-row" key={count}>
                 {Array.from({ length: count }, () => {
@@ -683,17 +719,22 @@ export function BlackHoleGame() {
                   const owner = value === 0 ? null : value < 0 ? FIRST_PLAYER : SECOND_PLAYER;
                   const ownerName = owner ? playerName(owner) : '';
                   const isRecommended = !result && recommendedCell === cell;
-                  const label = isHole ? '黑洞' : value === 0 ? `第 ${cell + 1} 格，空${isRecommended ? '，推荐着法' : ''}` : `${ownerName}，数字 ${Math.abs(value)}`;
+                  const label = isHole
+                    ? t('game.hole')
+                    : value === 0
+                      ? t('game.emptyCell', { cell: cell + 1, recommended: isRecommended ? t('game.recommendedSuffix') : '' })
+                      : t('game.occupiedCell', { owner: ownerName, number: Math.abs(value) });
                   const pieceClass = owner === FIRST_PLAYER ? 'first-piece' : owner === SECOND_PLAYER ? 'second-piece' : '';
                   return (
                     <button
                       className={`cell ${pieceClass} ${isHole ? 'hole' : ''} ${scoreNeighbors.has(cell) ? 'scored-neighbor' : ''} ${isRecommended ? 'recommended-move' : ''}`}
                       key={cell}
+                      data-recommended-label={t('game.recommendedBadge')}
                       aria-label={label}
                       disabled={thinking || evaluating || Boolean(result) || value !== 0 || !canPlay}
                       onClick={() => humanMove(cell)}
                     >
-                      {isHole ? <span className="hole-label">黑洞</span> : value !== 0 ? <><small>{ownerName}</small>{Math.abs(value)}</> : <span>{String(cell + 1).padStart(2, '0')}</span>}
+                      {isHole ? <span className="hole-label">{t('game.hole')}</span> : value !== 0 ? <><small>{ownerName}</small>{Math.abs(value)}</> : <span>{String(cell + 1).padStart(2, '0')}</span>}
                     </button>
                   );
                 })}
@@ -716,36 +757,36 @@ export function BlackHoleGame() {
           />
 
           <section className="rules-card">
-            <span className="kicker">怎么玩</span>
-            <p>双方轮流把自己的 <b>1—10</b> 放入空格。最后剩下的一格成为黑洞，只统计与它相邻的数字。</p>
-            <p><b>邻和较大者输</b>；相同则平局。蓝色为先手，红色为后手。</p>
+            <span className="kicker">{t('game.rulesKicker')}</span>
+            <p>{t('game.rulesOne')}</p>
+            <p><b>{t('game.rulesTwo')}</b></p>
           </section>
 
           {result ? (
             <section className="result-card">
-              <span className="kicker">本局结果</span>
+              <span className="kicker">{t('game.resultKicker')}</span>
               <h2>{winnerText}</h2>
               <div className="score-pair">
                 <div><small>{playerName(FIRST_PLAYER)}</small><strong>{result.firstSum}</strong></div>
                 <span>:</span>
                 <div><small>{playerName(SECOND_PLAYER)}</small><strong>{result.secondSum}</strong></div>
               </div>
-              <p>黑洞位于格 {String(result.hole + 1).padStart(2, '0')}，高亮圆圈参与计分。</p>
+              <p>{t('game.resultHole', { cell: String(result.hole + 1).padStart(2, '0') })}</p>
             </section>
           ) : (
             <section className="search-card">
-              <span className="kicker">最近决策</span>
-              <p>{detail}</p>
+              <span className="kicker">{t('game.latestDecision')}</span>
+              <p>{renderUiMessage(detail, t)}</p>
             </section>
           )}
 
           <section className="history-card">
-            <span className="kicker">落子记录</span>
+            <span className="kicker">{t('game.history')}</span>
             <ol>
-              {moves.length === 0 && <li className="empty-history">等待第一手</li>}
+              {moves.length === 0 && <li className="empty-history">{t('game.awaitingFirst')}</li>}
               {moves.slice(-8).reverse().map((move, index) => (
                 <li key={`${move.number}-${move.side}-${index}`}>
-                  <span>{move.side === 'ai' ? 'AI' : move.side === 'human' ? '你' : move.side === 'player1' ? '玩家一' : '玩家二'} {move.number}</span>
+                  <span>{move.side === 'ai' ? t('game.ai') : move.side === 'human' ? t('game.you') : move.side === 'player1' ? t('game.playerOne') : t('game.playerTwo')} {move.number}</span>
                   <strong>{String(move.cell + 1).padStart(2, '0')}</strong>
                 </li>
               ))}

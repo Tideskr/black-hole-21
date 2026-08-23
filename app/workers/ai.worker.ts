@@ -25,7 +25,7 @@ self.onmessage = async (event: MessageEvent<AiRequest>) => {
       const move = exact
         ? engine._exact_best_move(pointer, request.player)
         : engine._strong_best_move(pointer, request.player, request.budgetMs ?? 2000);
-      if (move < 0 || move >= 21 || request.board[move] !== 0) throw new Error('搜索引擎返回了非法着法');
+      if (move < 0 || move >= 21 || request.board[move] !== 0) throw new Error('The search engine returned an illegal move');
       Object.assign(response, {
         ok: true,
         move,

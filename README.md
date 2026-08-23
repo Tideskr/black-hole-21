@@ -1,31 +1,33 @@
 # 21 · Black Hole
 
-一个 21 格抽象数字策略游戏，以及一份可复现的计算机辅助先手必胜证明。
+A bilingual implementation of the 21-cell abstract number strategy game, together with a reproducible computer-assisted proof that the first player can force a win.
 
-- 网站：`https://21.skr.moe`
-- AI 先手：第 1–4 手查询 v6 策略证书，之后由 C/WASM alpha-beta 精确搜索到终局。
-- 真人先手：AI 前三手使用约 2 秒 MCTS，第 4 手起使用精确搜索；这一模式明确不声称已有后手不败证明。
-- 本地双人：同一设备轮流落子；AI 模式可撤回到上一真人决策点，双人模式可撤销上一手。
-- 实时局势：不绘制抽象指数曲线，直接说明双方从当前局面开始完美应对时先手可胜、可和或无法避免落败，并提醒后续失误仍会改变实际结局。
-- 精确决策指标：进入剩余 12 格的精确阶段后，显示当前玩家的不败着法率和胜／和／负分支数；AI 先手模式改为显示 AI 在完美防守下保证的计分差。
-- 招法提示：每个决策点在独立 Worker 中后台预运算，点击“查看提示”才揭示并高亮；先手第 1–4 手直接查询已证明的必胜策略证书，第 5 手用完整 alpha-beta 精确搜索衔接，随后由精确残局分析接管，避免在必胜策略中途回退到 MCTS。真人先手模式的 AI 第 4 手也使用精确搜索，防止近似估值覆盖已证明的胜负结果。
-- 规则：双方依次放下 1–10，最后一格为黑洞；黑洞邻格数字之和较大者输，相等为平局。
+- Website: <https://21.skr.moe>
+- Languages: Simplified Chinese and English, selected from the browser language and remembered locally.
+- Themes: system-aware light and dark themes with a persistent manual override.
+- AI first: moves 1–4 come from the proven strategy certificate; later moves use exact C/WASM alpha-beta search.
+- Human first: the AI uses an approximately two-second MCTS search for its first three moves and exact search from its fourth reply. This experimental mode does **not** claim that the second player can avoid losing.
+- Local two-player: both players share one device. AI games undo to the previous human decision; local games undo one move.
+- Position status: reports whether the first player can win, draw, or cannot avoid losing under perfect play, while noting that later mistakes can change the practical result.
+- Exact analysis: late positions show the current player's non-losing move rate and win/draw/loss branch counts. AI-first games instead show the scoring margin the AI can guarantee against perfect defense.
+- Hints: every decision is precomputed in a separate Web Worker and revealed only after the user selects **Show hint**. First-player moves 1–4 use the proven certificate, move 5 bridges into exact alpha-beta search, and exact endgame analysis then takes over.
+- Rules: both players place 1 through 10 in order. The final empty cell is the black hole; the player with the larger sum around it loses, and equal sums draw.
 
-## 目录
+## Repository layout
 
 ```text
-strategy/  v6 策略证书（唯一事实来源）
-proof/     Python 与 Colab 证明程序
-engine/    C 搜索引擎和 WebAssembly 构建
-app/       React/Vinext 网站
-scripts/   证书校验与运行时资产生成
+strategy/  v6 strategy certificate, the sole certificate source of truth
+proof/     Python/Numba prover and Google Colab launcher
+engine/    C search engine and WebAssembly build
+app/       React/Vinext website
+scripts/   certificate validation and static-build preparation
 ```
 
-网站不会维护一份手抄策略。`npm run prepare:strategy` 会检查原始证书的 SHA-256、20 × 18 × 16 个分支和所有落子合法性，再把精简数据写入 `public/generated/`。
+The website never carries a hand-copied strategy table. `npm run prepare:strategy` verifies the source certificate's SHA-256, all `20 × 18 × 16` branches, and move legality before generating compact runtime data in `public/generated/`.
 
-## 本地运行
+## Local development
 
-需要 Node.js 22+ 和 Emscripten 6.0.8：
+Node.js 22+ and Emscripten 6.0.8 are required:
 
 ```bash
 git clone https://github.com/Tideskr/black-hole-21.git
@@ -33,14 +35,14 @@ cd black-hole-21
 npm install
 ```
 
-按照 [Emscripten SDK 安装说明](https://emscripten.org/docs/getting_started/downloads.html) 安装并激活 `6.0.8`，确认 `emcc --version` 可用，然后：
+Install and activate Emscripten SDK 6.0.8 using the [official instructions](https://emscripten.org/docs/getting_started/downloads.html), confirm that `emcc --version` works, then run:
 
 ```bash
 npm run build:wasm
 npm run dev
 ```
 
-浏览器打开 `http://localhost:3000`。完整验证使用：
+Open <http://localhost:3000>. The full fast validation suite is:
 
 ```bash
 npm run build
@@ -48,36 +50,43 @@ npm test
 npm run lint
 ```
 
-## GitHub Actions 自动部署
+## Reproducing the full proof
 
-仓库已经包含 `.github/workflows/deploy.yml`。它会在 `main` 更新后校验证书、编译 WASM、构建静态网站并部署到 Cloudflare Workers Static Assets。
+Normal builds perform a fast structural certificate check. The complete 6,153 exact endgame searches are intentionally excluded from ordinary CI. Run the manual **Re-run full proof** GitHub Actions workflow, or execute:
 
-1. 登录 Cloudflare，打开 **My Profile → API Tokens → Create Token**。
-2. 选用 **Edit Cloudflare Workers** 模板，令牌只授予实际部署账户。
-3. 在 Cloudflare 控制台右侧或执行 `npx wrangler whoami` 找到 Account ID。
-4. 打开 GitHub 仓库的 **Settings → Secrets and variables → Actions**，创建：
+```bash
+python -m pip install numpy numba
+python -c "from proof.prove_first_player import run_proof; ok,_=run_proof(workers=4, checkpoint_path='proof-output-v6.json', previous_checkpoint_path=None); raise SystemExit(0 if ok else 1)"
+```
+
+See [`proof/README.md`](proof/README.md) for details.
+
+## GitHub Actions deployment
+
+The repository includes `.github/workflows/deploy.yml`. Every update to `main` validates the certificate, compiles WASM, builds the static site, runs tests and lint, then deploys to Cloudflare Workers Static Assets.
+
+1. Sign in to Cloudflare and open **My Profile → API Tokens → Create Token**.
+2. Start from the **Edit Cloudflare Workers** template and restrict the token to the deployment account.
+3. Find the Account ID in the Cloudflare dashboard or with `npx wrangler whoami`.
+4. In the GitHub repository, open **Settings → Secrets and variables → Actions** and add:
    - `CLOUDFLARE_API_TOKEN`
    - `CLOUDFLARE_ACCOUNT_ID`
-5. 打开 **Actions → Deploy to Cloudflare → Run workflow**。首次成功后会得到 `black-hole-21.<账户>.workers.dev` 地址。
+5. Open **Actions → Deploy to Cloudflare → Run workflow**. The first successful run creates a `workers.dev` URL.
 
-不要把令牌或 Account ID 写进源码、提交记录或公开日志。
+Never commit the API token or Account ID, and never expose them in public logs.
 
-## 绑定 `21.skr.moe`
+## Custom domain
 
-`skr.moe` 已使用 Cloudflare 名称服务器，因此不需要更换 DNS 托管方。
+`skr.moe` already uses Cloudflare nameservers, so no DNS-provider migration is required.
 
-1. 先在 **DNS → Records** 搜索 `21`，确认它没有承载现有服务；不要直接覆盖不明记录。
-2. 打开 **Workers & Pages → black-hole-21 → Settings → Domains & Routes**。
-3. 选择 **Add → Custom Domain**，输入 `21.skr.moe` 并确认。
-4. Cloudflare 会建立代理 DNS 记录并签发 HTTPS 证书。等待状态变为 Active 后访问 `https://21.skr.moe`。
-5. 验证首页、`/proof`、刷新子页面、WASM AI 落子和移动端布局。
+1. In **DNS → Records**, check whether `21` already serves a real workload. Do not overwrite an unknown record.
+2. Open **Workers & Pages → black-hole-21 → Settings → Domains & Routes**.
+3. Select **Add → Custom Domain**, enter `21.skr.moe`, and confirm.
+4. Cloudflare creates the proxied DNS record and provisions HTTPS. Wait for the status to become **Active**.
+5. Verify `/`, `/proof`, direct route refreshes, WASM AI moves, both languages, both themes, and the mobile layout.
 
-若名称已经被其他 Worker 或 DNS 记录使用，先查明原用途，再决定迁移；本项目不会自动删除现有记录。
+If the hostname already belongs to another Worker or DNS record, identify its owner and migration plan first. This project never deletes an existing record automatically.
 
-## 证明复现
-
-快速结构检查由每次构建自动运行。完整的 6,153 个残局重新搜索不会放进普通 CI，可在 GitHub Actions 手动运行 **Re-run full proof**，或参见 [`proof/README.md`](proof/README.md)。
-
-## 许可证
+## License
 
 [MIT](LICENSE)

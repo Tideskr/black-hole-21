@@ -1,4 +1,6 @@
 {
+  "certificate_format": "black-hole-21-first-player-opening-v1",
+  "proof_statement": "With H1 fixed at cell 1: for every A1 there exists H2; for every A2 there exists H3; for every A3 there exists H4; and exact minimax from the resulting position is a forced first-player win.",
   "strategy_version": 6,
   "results": {
     "7": {

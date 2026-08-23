@@ -22,4 +22,4 @@ for (const entry of await readdir(source, { withFileTypes: true })) {
   }
 }
 
-console.log('已把预渲染首页、证明页和 404 页面整理到静态发布目录。');
+console.log('Copied prerendered home, proof, and 404 pages into the static deployment directory.');
