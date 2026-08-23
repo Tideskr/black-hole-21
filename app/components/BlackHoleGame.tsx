@@ -188,11 +188,11 @@ function AdvantageChart({
             <span className="kicker">{openingHint.source === 'certificate' ? '必胜策略提示' : openingHint.source === 'exact' ? '精确保胜提示' : '开局提示'}</span>
             <strong>格 {String(openingHint.cell + 1).padStart(2, '0')}</strong>
           </div>
-          <span className={`outcome-pill ${openingHint.source === 'mcts' ? 'drawing' : 'winning'}`}>{openingHint.source === 'certificate' ? '策略保证' : openingHint.source === 'exact' ? '可保胜' : '强力估计'}</span>
+          <span className={`outcome-pill ${openingHint.source === 'mcts' || openingHint.value === 0 ? 'drawing' : openingHint.value > 0 ? 'winning' : 'losing'}`}>{openingHint.source === 'certificate' ? '策略保证' : openingHint.source === 'exact' ? openingHint.value > 0 ? '可保胜' : openingHint.value === 0 ? '可保和' : '败局难免' : '强力估计'}</span>
           <p>{openingHint.source === 'certificate'
             ? '直接来自已证明的先手必胜策略证书，不使用 MCTS。'
             : openingHint.source === 'exact'
-              ? `证书开局后的完整 alpha-beta 精确搜索；该着法可继续保证先手获胜，搜索值 ${openingHint.value}。`
+              ? `完整 alpha-beta 精确搜索；该着法${openingHint.value > 0 ? '可保证先手获胜' : openingHint.value === 0 ? '可保证先手保和' : '仍无法避免先手落败'}，搜索值 ${openingHint.value}。`
               : `基于 ${formatInteger(openingHint.iterations)} 次 MCTS 模拟；估值 ${openingHint.estimate.toFixed(3)}。这不是可证明的最优着法。`}</p>
         </div>
       )}
@@ -339,14 +339,14 @@ export function BlackHoleGame() {
     const userCanChoose = mode === 'local' || nextPlayer(board) === humanPlayer;
     const waitingForOpeningCertificate = nextPlayer(board) === FIRST_PLAYER && nextNumber(board) <= 4 && !certificate;
     if (thinking || evaluating || result || moveAnalysis || certificateHint || waitingForOpeningCertificate || !userCanChoose || emptyCells(board).length <= 1) return;
-    const exactCertifiedContinuation = certifiedWin && nextPlayer(board) === FIRST_PLAYER && nextNumber(board) === 5;
+    const exactFifthMove = nextPlayer(board) === FIRST_PLAYER && nextNumber(board) === 5 && (mode === 'human-first' || certifiedWin);
     const token = ++hintGenerationRef.current;
     restartHintWorker();
     const statusTimer = window.setTimeout(() => {
       if (hintGenerationRef.current === token) setHintComputing(true);
     }, 0);
     void askHintEngine({
-      kind: exactCertifiedContinuation ? 'exactBestMove' : 'strongBestMove',
+      kind: exactFifthMove ? 'exactBestMove' : 'strongBestMove',
       board,
       player: nextPlayer(board),
       budgetMs: 1200,
@@ -354,7 +354,7 @@ export function BlackHoleGame() {
       if (hintGenerationRef.current !== token) return;
       setComputedHint({
         cell: response.move!,
-        source: exactCertifiedContinuation ? 'exact' : 'mcts',
+        source: exactFifthMove ? 'exact' : 'mcts',
         iterations: response.iterations ?? 0,
         estimate: response.estimate ?? 0,
         value: response.value ?? 0,
@@ -499,7 +499,7 @@ export function BlackHoleGame() {
         nextDetail = `策略证书 · 第 ${number} 手选择格 ${String(move + 1).padStart(2, '0')}`;
       } else {
         const empty = emptyCells(position).length;
-        const exact = currentMode === 'ai-first' || empty <= 12;
+        const exact = currentMode === 'ai-first' || empty <= 12 || (currentMode === 'human-first' && number === 4);
         const response = await askEngine({
           kind: exact ? 'exactBestMove' : 'strongBestMove',
           board: position,

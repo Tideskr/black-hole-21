@@ -82,6 +82,19 @@ try {
   if (toleranceCounts.wins !== 0 || toleranceCounts.draws !== 6 || toleranceCounts.losses !== 5) {
     throw new Error(`着法容错率回归失败：${JSON.stringify(toleranceCounts)}`);
   }
+
+  // 真人先手反馈前缀：证书第 4 手格 6 可保胜，而格 2 只能保和。
+  const humanFirstPrefix = Array(21).fill(0);
+  for (const [cell, value] of [[1,-1],[21,1],[16,-2],[20,2],[17,-3],[15,3]]) humanFirstPrefix[cell - 1] = value;
+  for (const [h4, expected] of [[6, 101], [2, 0]]) {
+    const child = [...humanFirstPrefix];
+    child[h4 - 1] = -4;
+    engine.HEAP8.set(Int8Array.from(child), pointer);
+    engine._exact_best_move(pointer, 1);
+    if (engine._get_last_value() !== expected) {
+      throw new Error(`真人先手第 4 手回归失败：h4=${h4}, expected=${expected}, actual=${engine._get_last_value()}`);
+    }
+  }
   console.log('C/WASM 引擎通过 12 个随机残局与终局符号对照。');
 } finally {
   engine._free(pointer);
