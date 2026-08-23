@@ -92,26 +92,7 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .game-rail { min-width: 0; border-left: 1px solid var(--line); }
 .game-rail > section { padding: 20px 0 20px 24px; border-bottom: 1px solid var(--line); }
-.advantage-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; }
-.advantage-heading strong { display: block; margin-top: 7px; font-size: 16px; letter-spacing: -.02em; }
-.advantage-number { display: flex; align-items: baseline; }
-.advantage-number b { font-size: 35px; line-height: .9; letter-spacing: -.06em; }
-.advantage-number small { color: var(--muted); font-size: 9px; }
-.chart-wrap { position: relative; margin: 18px 0 8px; padding-left: 18px; }
-.advantage-chart { display: block; width: 100%; height: 108px; overflow: visible; }
-.advantage-chart .chart-grid { stroke: #242424; stroke-width: 1; stroke-dasharray: 3 4; }
-.advantage-chart .trend-segment { stroke: var(--blue); stroke-width: 2.4; stroke-linecap: round; }
-.advantage-chart .trend-segment.estimated { opacity: .7; stroke-dasharray: 5 5; }
-.advantage-chart .trend-segment.resolved { stroke-dasharray: none; }
-.advantage-chart circle { fill: var(--ink); stroke: var(--blue); stroke-width: 2; }
-.advantage-chart circle.estimated { opacity: .72; stroke-dasharray: 2 2; }
-.chart-label { position: absolute; left: 0; color: #5d5d5d; font-size: 8px; }
-.chart-label.top { top: 12px; }
-.chart-label.middle { top: 50%; transform: translateY(-50%); }
-.chart-label.bottom { bottom: 9px; }
-.chart-caption { display: flex; justify-content: space-between; color: var(--muted); font-size: 9px; }
-.chart-caption span:first-child { color: var(--blue); font-weight: 800; }
-.chart-caption span.pending { animation: pulse-text 1s ease-in-out infinite; }
+.situation-summary strong { display: block; margin-top: 8px; font-size: 17px; line-height: 1.45; letter-spacing: -.025em; }
 .tolerance-card { margin-top: 17px; padding-top: 17px; border-top: 1px solid var(--line); }
 .tolerance-heading { display: flex; align-items: end; justify-content: space-between; gap: 14px; }
 .tolerance-heading strong { display: block; margin-top: 6px; font-size: 11px; }

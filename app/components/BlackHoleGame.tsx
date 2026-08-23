@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FIRST_PLAYER, SECOND_PLAYER, NEIGHBORS, ROWS, advantageIndex, certifiedMove, emptyBoard,
   emptyCells, formatInteger, nextNumber, nextPlayer, outcomeLabel, place,
@@ -27,7 +27,7 @@ interface MoveRecord {
 }
 
 interface TrendPoint { label: string; value: number; certainty: Certainty; }
-interface EstimatedHint { cell: number; iterations: number; estimate: number; }
+interface OpeningHint { cell: number; source: 'certificate' | 'mcts'; iterations: number; estimate: number; }
 interface MoveAnalysis {
   wins: number;
   draws: number;
@@ -94,7 +94,7 @@ function initialAiGame(): { board: Board; moves: MoveRecord[] } {
 }
 
 function AdvantageChart({
-  points, mode, pending, analysis, analysisPlayer, hintVisible, estimatedHint, hintComputing,
+  points, mode, pending, analysis, analysisPlayer, hintVisible, openingHint, hintComputing,
 }: {
   points: TrendPoint[];
   mode: Mode;
@@ -102,21 +102,17 @@ function AdvantageChart({
   analysis: MoveAnalysis | null;
   analysisPlayer: string;
   hintVisible: boolean;
-  estimatedHint: EstimatedHint | null;
+  openingHint: OpeningHint | null;
   hintComputing: boolean;
 }) {
-  const width = 320;
-  const height = 104;
   const current = points.at(-1) ?? { value: 50, certainty: 'estimate' as const, label: '开局' };
-  const coordinates = points.map((point, index) => {
-    const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
-    const y = height - (point.value / 100) * height;
-    return { x, y };
-  });
-  const label = mode === 'local' ? '先手理论结果' : 'AI 理论结果';
-  const certainty = pending ? '评估中…' : current.certainty === 'proof' ? '策略保证' : current.certainty === 'exact' ? '精确搜索' : mode === 'local' ? '近似估值（虚线）' : 'MCTS 估值（虚线）';
-  const cadence = mode === 'local' ? '双方每次落子后更新' : 'AI 完成回应后更新';
-  const exactExplanation = '表示双方从当前局面开始都采用最佳着法时的结果；任何一方后续失误都可能改变实际结局。精确胜／和／负固定为 100／50／0，前期近似值用虚线表示。';
+  const firstPlayerValue = mode === 'human-first' ? 100 - current.value : current.value;
+  const certainty = pending ? '正在评估' : current.certainty === 'proof' ? '策略证明' : current.certainty === 'exact' ? '精确搜索' : '近似估计';
+  const situation = pending
+    ? '正在计算双方完美应对下的结果…'
+    : current.certainty === 'estimate'
+      ? firstPlayerValue > 57 ? '近似估计：完美应对下先手局面占优；若有人后续失误，实战结果仍可能改变。' : firstPlayerValue < 43 ? '近似估计：完美应对下后手局面占优；若有人后续失误，实战结果仍可能改变。' : '近似估计：完美应对下双方接近均势；若有人后续失误，实战结果仍可能改变。'
+      : firstPlayerValue > 50 ? '完美应对下先手可以获胜；若有人后续失误，实战结果仍可能改变。' : firstPlayerValue < 50 ? '完美应对下先手无法避免落败；若有人后续失误，实战结果仍可能改变。' : '完美应对下先手可以保和；若有人后续失误，实战结果仍可能改变。';
   const safeMoves = analysis ? analysis.wins + analysis.draws : 0;
   const safetyRate = analysis ? Math.round((safeMoves / analysis.total) * 100) : null;
   const aiMargin = analysis && analysis.bestFirstValue > 0 ? Math.max(0, analysis.bestFirstValue - 100) : null;
@@ -125,32 +121,11 @@ function AdvantageChart({
     : '';
 
   return (
-    <section className="advantage-card" aria-label={`${label} ${current.value}`}>
-      <div className="advantage-heading">
-        <div><span className="kicker">实时局势 · 双方完美应对</span><strong>{label}</strong></div>
-        <div className="advantage-number"><b>{current.certainty === 'estimate' ? '≈' : ''}{current.value}</b><small>/100</small></div>
+    <section className="advantage-card" aria-label={situation}>
+      <div className="situation-summary">
+        <span className="kicker">实时局势 · {certainty}</span>
+        <strong>{situation}</strong>
       </div>
-      <div className="chart-wrap">
-        <span className="chart-label top">胜</span>
-        <span className="chart-label middle">和</span>
-        <span className="chart-label bottom">负</span>
-        <svg className="advantage-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${label}变化曲线`}>
-          <line className="chart-grid" x1="0" y1="2" x2={width} y2="2" />
-          <line className="chart-grid" x1="0" y1="52" x2={width} y2="52" />
-          <line className="chart-grid" x1="0" y1="102" x2={width} y2="102" />
-          {coordinates.slice(1).map((coordinate, index) => {
-            const previous = coordinates[index];
-            const estimated = points[index].certainty === 'estimate' || points[index + 1].certainty === 'estimate';
-            return <line className={`trend-segment ${estimated ? 'estimated' : 'resolved'}`} key={`segment-${index}`} x1={previous.x} y1={previous.y} x2={coordinate.x} y2={coordinate.y} />;
-          })}
-          {points.map((point, index) => {
-            const coordinate = coordinates[index];
-            return <circle className={point.certainty === 'estimate' ? 'estimated' : 'resolved'} key={`${point.label}-${index}`} cx={coordinate.x} cy={coordinate.y} r={index === points.length - 1 ? 4 : 2.2} />;
-          })}
-        </svg>
-      </div>
-      <div className="chart-caption"><span className={pending ? 'pending' : ''}>{certainty}</span><span>{current.label}</span></div>
-      <p>{cadence}。{exactExplanation}</p>
       {analysis && mode === 'ai-first' && aiMargin !== null && (
         <div className="tolerance-card margin-card">
           <div className="tolerance-heading">
@@ -191,17 +166,19 @@ function AdvantageChart({
             : '这是最后一手，无后续回应分支。'}</p>
         </div>
       )}
-      {hintVisible && !analysis && estimatedHint && (
-        <div className="recommendation-card estimated-recommendation">
+      {hintVisible && !analysis && openingHint && (
+        <div className={`recommendation-card ${openingHint.source === 'mcts' ? 'estimated-recommendation' : ''}`}>
           <div>
-            <span className="kicker">开局提示</span>
-            <strong>格 {String(estimatedHint.cell + 1).padStart(2, '0')}</strong>
+            <span className="kicker">{openingHint.source === 'certificate' ? '必胜策略提示' : '开局提示'}</span>
+            <strong>格 {String(openingHint.cell + 1).padStart(2, '0')}</strong>
           </div>
-          <span className="outcome-pill drawing">强力估计</span>
-          <p>基于 {formatInteger(estimatedHint.iterations)} 次 MCTS 模拟；估值 {estimatedHint.estimate.toFixed(3)}。这不是可证明的最优着法，进入精确残局后会自动升级。</p>
+          <span className={`outcome-pill ${openingHint.source === 'certificate' ? 'winning' : 'drawing'}`}>{openingHint.source === 'certificate' ? '策略保证' : '强力估计'}</span>
+          <p>{openingHint.source === 'certificate'
+            ? '直接来自已证明的先手必胜策略证书，不使用 MCTS。'
+            : `基于 ${formatInteger(openingHint.iterations)} 次 MCTS 模拟；估值 ${openingHint.estimate.toFixed(3)}。这不是可证明的最优着法。`}</p>
         </div>
       )}
-      {hintVisible && !analysis && !estimatedHint && hintComputing && (
+      {hintVisible && !analysis && !openingHint && hintComputing && (
         <div className="recommendation-card estimated-recommendation pending-recommendation">
           <div><span className="kicker">开局提示</span><strong>正在后台计算…</strong></div>
           <p>你仍可以继续落子；提示完成后会自动显示。</p>
@@ -225,7 +202,7 @@ export function BlackHoleGame() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ScoreResult | null>(null);
   const [moveAnalysis, setMoveAnalysis] = useState<MoveAnalysis | null>(null);
-  const [estimatedHint, setEstimatedHint] = useState<EstimatedHint | null>(null);
+  const [mctsHint, setMctsHint] = useState<OpeningHint | null>(null);
   const [hintComputing, setHintComputing] = useState(false);
   const [hintVisible, setHintVisible] = useState(false);
   const workerRef = useRef<Worker | null>(null);
@@ -234,6 +211,25 @@ export function BlackHoleGame() {
   const hintGenerationRef = useRef(0);
   const requestRef = useRef(0);
   const hintRequestRef = useRef(0);
+
+  const certificateHint = useMemo<OpeningHint | null>(() => {
+    const number = nextNumber(board);
+    if (!certificate || nextPlayer(board) !== FIRST_PLAYER || number > 4) return null;
+    const opponentMoves = new Map(moves
+      .filter((move) => move.player === SECOND_PLAYER)
+      .map((move) => [move.number, move.cell + 1]));
+    const firstMoves = new Map(moves
+      .filter((move) => move.player === FIRST_PLAYER)
+      .map((move) => [move.number, move.cell + 1]));
+    try {
+      for (let previous = 1; previous < number; previous += 1) {
+        if (firstMoves.get(previous) !== certifiedMove(certificate, opponentMoves, previous) + 1) return null;
+      }
+      return { cell: certifiedMove(certificate, opponentMoves, number), source: 'certificate', iterations: 0, estimate: 1 };
+    } catch {
+      return null;
+    }
+  }, [board, certificate, moves]);
 
   const createWorker = useCallback(() => {
     const worker = new AiWorker();
@@ -281,7 +277,7 @@ export function BlackHoleGame() {
     hintGenerationRef.current += 1;
     hintWorkerRef.current?.terminate();
     hintWorkerRef.current = null;
-    setEstimatedHint(null);
+    setMctsHint(null);
     setHintComputing(false);
     setHintVisible(false);
   }, []);
@@ -327,7 +323,8 @@ export function BlackHoleGame() {
   useEffect(() => {
     const humanPlayer: Player = mode === 'ai-first' ? SECOND_PLAYER : FIRST_PLAYER;
     const userCanChoose = mode === 'local' || nextPlayer(board) === humanPlayer;
-    if (thinking || evaluating || result || moveAnalysis || !userCanChoose || emptyCells(board).length <= 1) return;
+    const waitingForOpeningCertificate = nextPlayer(board) === FIRST_PLAYER && nextNumber(board) <= 4 && !certificate;
+    if (thinking || evaluating || result || moveAnalysis || certificateHint || waitingForOpeningCertificate || !userCanChoose || emptyCells(board).length <= 1) return;
     const token = ++hintGenerationRef.current;
     restartHintWorker();
     const statusTimer = window.setTimeout(() => {
@@ -340,8 +337,9 @@ export function BlackHoleGame() {
       budgetMs: 1200,
     }).then((response) => {
       if (hintGenerationRef.current !== token) return;
-      setEstimatedHint({
+      setMctsHint({
         cell: response.move!,
+        source: 'mcts',
         iterations: response.iterations ?? 0,
         estimate: response.estimate ?? 0,
       });
@@ -357,7 +355,7 @@ export function BlackHoleGame() {
         hintWorkerRef.current = null;
       }
     };
-  }, [askHintEngine, board, evaluating, mode, moveAnalysis, restartHintWorker, result, thinking]);
+  }, [askHintEngine, board, certificate, certificateHint, evaluating, mode, moveAnalysis, restartHintWorker, result, thinking]);
 
   const analyzeLegalMoves = useCallback(async (position: Board): Promise<MoveAnalysis> => {
     const player = nextPlayer(position);
@@ -628,8 +626,10 @@ export function BlackHoleGame() {
           : `${playerName(currentPlayer)}落子 · 数字 ${nextNumber(board)}`;
   const canPlay = mode === 'local' || currentPlayer === humanPlayer;
   const canUndo = moves.length > (mode === 'ai-first' ? 1 : 0);
-  const canShowHint = canPlay && !thinking && !evaluating && !result;
-  const recommendedCell = hintVisible ? moveAnalysis?.recommendedCell ?? estimatedHint?.cell : undefined;
+  const waitingForOpeningCertificate = currentPlayer === FIRST_PLAYER && nextNumber(board) <= 4 && !certificate;
+  const canShowHint = canPlay && !thinking && !evaluating && !result && !waitingForOpeningCertificate;
+  const openingHint = certificateHint ?? mctsHint;
+  const recommendedCell = hintVisible ? moveAnalysis?.recommendedCell ?? openingHint?.cell : undefined;
 
   let cellIndex = 0;
   return (
@@ -694,7 +694,7 @@ export function BlackHoleGame() {
             analysis={moveAnalysis}
             analysisPlayer={playerName(currentPlayer)}
             hintVisible={hintVisible}
-            estimatedHint={estimatedHint}
+            openingHint={openingHint}
             hintComputing={hintComputing}
           />
 
