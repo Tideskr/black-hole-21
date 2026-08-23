@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: 6.0.8
+          actions-cache-folder: emsdk-cache
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run lint

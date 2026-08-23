@@ -1,0 +1,48 @@
+{
+  "name": "black-hole-21",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "predev": "npm run prepare:strategy",
+    "dev": "vinext dev",
+    "prepare:strategy": "node scripts/prepare-strategy.mjs",
+    "build:wasm": "node engine/build.mjs",
+    "build": "npm run prepare:strategy && npm run build:wasm && vinext build --prerender-all && node scripts/finalize-static.mjs",
+    "build:web": "npm run prepare:strategy && vinext build --prerender-all && node scripts/finalize-static.mjs",
+    "start": "vinext start",
+    "deploy": "wrangler deploy --config wrangler.jsonc",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .wrangler --ignore-pattern engine/dist",
+    "test:unit": "vitest run",
+    "test:engine": "node engine/test-engine.mjs",
+    "test": "npm run prepare:strategy && npm run test:unit && npm run test:engine"
+  },
+  "dependencies": {
+    "next": "16.2.6",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.37.1",
+    "@cloudflare/workers-types": "4.20260515.1",
+    "@openai/sites-vite-plugin": "^0.1.0 || ^0.2.0",
+    "@tailwindcss/postcss": "4.2.1",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "@vitejs/plugin-rsc": "0.5.26",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.6",
+    "react-server-dom-webpack": "19.2.6",
+    "tailwindcss": "4.2.1",
+    "typescript": "5.9.3",
+    "vinext": "1.0.0-beta.3",
+    "vite": "8.0.13",
+    "vitest": "^4.1.11",
+    "wrangler": "4.92.0"
+  },
+  "type": "module"
+}
