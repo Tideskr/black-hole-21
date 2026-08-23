@@ -5,6 +5,10 @@ export const metadata: Metadata = {
   title: '21 · Black Hole',
   description: '21 格黑洞数字策略游戏：挑战计算机辅助证明的先手必胜策略。',
   metadataBase: new URL('https://21.skr.moe'),
+  icons: {
+    icon: '/icon.svg',
+    shortcut: '/icon.svg',
+  },
   openGraph: {
     title: '21 · Black Hole',
     description: '挑战计算机辅助证明的先手必胜策略。',

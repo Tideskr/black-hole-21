@@ -21,16 +21,16 @@ export function ProofExplorer() {
   return (
     <div className="proof-explorer">
       <div className="explorer-heading">
-        <span className="kicker">CERTIFICATE LOOKUP</span>
+        <span className="kicker">证书分支查询</span>
         <h2>沿着一条分支查看见证</h2>
       </div>
       <div className="branch-flow">
         <label><span>AI · H1</span><strong>01</strong></label>
-        <label><span>对手 · A1</span><select value={a1} onChange={(event) => { setA1(event.target.value); setA2(''); setA3(''); }}>{Object.keys(certificate.fullResults).sort((a, b) => Number(a) - Number(b)).map((cell) => <option key={cell}>{cell}</option>)}</select></label>
+        <label><span>对手 · A1</span><span className="select-shell"><select aria-label="选择对手第一手" value={a1} onChange={(event) => { setA1(event.target.value); setA2(''); setA3(''); }}>{Object.keys(certificate.fullResults).sort((a, b) => Number(a) - Number(b)).map((cell) => <option key={cell}>{cell}</option>)}</select><i aria-hidden="true">⌄</i></span></label>
         <label><span>AI · H2</span><strong>{String(branch.h2).padStart(2, '0')}</strong></label>
-        <label><span>对手 · A2</span><select value={selectedA2} onChange={(event) => { setA2(event.target.value); setA3(''); }}>{ai2Options.map((cell) => <option key={cell}>{cell}</option>)}</select></label>
+        <label><span>对手 · A2</span><span className="select-shell"><select aria-label="选择对手第二手" value={selectedA2} onChange={(event) => { setA2(event.target.value); setA3(''); }}>{ai2Options.map((cell) => <option key={cell}>{cell}</option>)}</select><i aria-hidden="true">⌄</i></span></label>
         <label><span>AI · H3</span><strong>{String(response.h3).padStart(2, '0')}</strong></label>
-        <label><span>对手 · A3</span><select value={selectedA3} onChange={(event) => setA3(event.target.value)}>{ai3Options.map((cell) => <option key={cell}>{cell}</option>)}</select></label>
+        <label><span>对手 · A3</span><span className="select-shell"><select aria-label="选择对手第三手" value={selectedA3} onChange={(event) => setA3(event.target.value)}>{ai3Options.map((cell) => <option key={cell}>{cell}</option>)}</select><i aria-hidden="true">⌄</i></span></label>
         <label className="winning-witness"><span>AI · H4</span><strong>{String(response.h4ByAi3[selectedA3]).padStart(2, '0')}</strong></label>
       </div>
       <p>从这个 H4 局面开始，证明器已完整搜索到终局并确认先手可以强制获胜。</p>

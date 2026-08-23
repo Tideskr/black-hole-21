@@ -8,9 +8,11 @@ export default function ProofPage() {
     <main className="site-shell proof-page">
       <SiteHeader active="proof" />
       <section className="proof-hero">
-        <p className="eyebrow">A FINITE, CHECKABLE CLAIM</p>
-        <h1>先手必胜，不靠猜。</h1>
-        <p>v6 证书给出前四手的策略见证；每个叶子局面再由 alpha-beta 完整搜索到终局。</p>
+        <div className="proof-title">
+          <p className="eyebrow">可复核的有限计算</p>
+          <h1>先手必胜，不靠猜。</h1>
+          <p>策略证书给出前四手的见证；每个叶子局面再由 alpha-beta 完整搜索到终局。</p>
+        </div>
         <div className="quantifiers" aria-label="证明量词结构">
           <span>∀ A₁</span><i>→</i><strong>∃ H₂</strong><i>→</i><span>∀ A₂</span><i>→</i><strong>∃ H₃</strong><i>→</i><span>∀ A₃</span><i>→</i><strong>∃ H₄</strong>
         </div>
@@ -25,7 +27,7 @@ export default function ProofPage() {
 
       <section className="proof-explanation">
         <div>
-          <span className="kicker">WHAT IS PROVED</span>
+          <span className="kicker">证明了什么</span>
           <h2>固定 H1=1，覆盖对手每一种回应。</h2>
         </div>
         <div className="proof-copy">
@@ -37,11 +39,15 @@ export default function ProofPage() {
       <ProofExplorer />
 
       <section className="certificate-card">
-        <span className="kicker">INTEGRITY</span>
-        <h2>策略版本 6</h2>
-        <code>{sha}</code>
-        <p>网站每次构建都会检查这个 SHA-256，并验证 20 × 18 × 16 个映射的完整性和落子合法性。</p>
-        <a href="https://github.com/Tideskr/black-hole-21/tree/main/strategy">查看原始证书与复现代码 ↗</a>
+        <div>
+          <span className="kicker">完整性</span>
+          <h2>当前策略证书</h2>
+        </div>
+        <div className="certificate-details">
+          <code>{sha}</code>
+          <p>网站每次构建都会检查这个 SHA-256，并验证 20 × 18 × 16 个映射的完整性和落子合法性。</p>
+          <a href="https://github.com/Tideskr/black-hole-21/tree/main/strategy">查看原始证书与复现代码 ↗</a>
+        </div>
       </section>
     </main>
   );

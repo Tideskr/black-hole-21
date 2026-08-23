@@ -7,7 +7,7 @@ export function SiteHeader({ active }: SiteHeaderProps) {
   return (
     <header className="topbar">
       <a className="brand" href="/" aria-label="21 黑洞游戏首页">
-        <span className="brand-mark">21</span>
+        <span className="brand-mark" aria-hidden="true">21</span>
         <span>BLACK HOLE</span>
       </a>
       <nav aria-label="主导航">

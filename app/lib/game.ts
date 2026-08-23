@@ -49,6 +49,13 @@ export function nextNumber(board: Board): number { return Math.floor(placedCount
 export function nextPlayer(board: Board): Player { return placedCount(board) % 2 === 0 ? FIRST_PLAYER : SECOND_PLAYER; }
 export function emptyCells(board: Board): number[] { return board.flatMap((value, index) => value === 0 ? [index] : []); }
 
+export function undoKeepCount(sides: readonly string[], localGame: boolean, minimum = 0): number {
+  if (sides.length <= minimum) return minimum;
+  if (localGame) return Math.max(minimum, sides.length - 1);
+  const lastHuman = sides.findLastIndex((side) => side === 'human');
+  return lastHuman < 0 ? minimum : Math.max(minimum, lastHuman);
+}
+
 export function place(board: Board, cell: number, player: Player): Board {
   if (cell < 0 || cell >= 21 || board[cell] !== 0) throw new Error(`格 ${cell + 1} 不能落子`);
   const result = [...board];
@@ -75,6 +82,44 @@ export function scoreBoard(board: Board): ScoreResult | null {
     diff,
     winner: diff > 0 ? FIRST_PLAYER : diff < 0 ? SECOND_PLAYER : 0,
   };
+}
+
+/**
+ * 把局面压缩成 0–100 的“优势指数”。它不是胜率：终局使用真实结果，
+ * 未搜索局面则衡量所有潜在黑洞周围已经形成的邻和差，并按完成度收缩。
+ */
+export function advantageIndex(board: Board, perspective: Player): number {
+  const terminal = scoreBoard(board);
+  if (terminal) {
+    if (terminal.winner === 0) return 50;
+    const margin = Math.abs(terminal.diff);
+    return terminal.winner === perspective ? Math.min(100, 82 + margin * 2) : Math.max(0, 18 - margin * 2);
+  }
+
+  const empties = emptyCells(board);
+  const placed = placedCount(board);
+  const completion = placed / 20;
+  let weighted = 0;
+  let weights = 0;
+  for (const hole of empties) {
+    let firstSum = 0;
+    let secondSum = 0;
+    let occupiedNeighbors = 0;
+    for (const neighbor of NEIGHBORS[hole]) {
+      const value = board[neighbor];
+      if (value < 0) firstSum += -value;
+      if (value > 0) secondSum += value;
+      if (value !== 0) occupiedNeighbors += 1;
+    }
+    const firstAdvantage = secondSum - firstSum;
+    const oriented = perspective === FIRST_PLAYER ? firstAdvantage : -firstAdvantage;
+    const density = occupiedNeighbors / NEIGHBORS[hole].length;
+    const weight = 0.35 + density;
+    weighted += Math.tanh(oriented / 8) * weight;
+    weights += weight;
+  }
+  const signal = weights ? weighted / weights : 0;
+  return Math.round(Math.max(4, Math.min(96, 50 + signal * (18 + completion * 28))));
 }
 
 export function outcomeLabel(value: number, aiPlayer: Player): string {

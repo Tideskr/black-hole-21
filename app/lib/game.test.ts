@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  FIRST_PLAYER, SECOND_PLAYER, NEIGHBORS, certifiedMove, emptyBoard,
-  nextNumber, place, scoreBoard, type RuntimeCertificate,
+  FIRST_PLAYER, SECOND_PLAYER, NEIGHBORS, advantageIndex, certifiedMove, emptyBoard,
+  nextNumber, place, scoreBoard, undoKeepCount, type RuntimeCertificate,
 } from './game';
 
 describe('棋盘规则', () => {
@@ -31,6 +31,21 @@ describe('棋盘规则', () => {
     expect(scoreBoard(board)).toMatchObject({ firstSum: 6, secondSum: 2, winner: SECOND_PLAYER });
     board = [...base]; board[1] = -4; board[2] = 4;
     expect(scoreBoard(board)).toMatchObject({ firstSum: 4, secondSum: 4, winner: 0 });
+  });
+
+  it('优势指数有界，并在终局严格反映胜负方向', () => {
+    expect(advantageIndex(emptyBoard(), FIRST_PLAYER)).toBe(50);
+    const board = Array.from({ length: 21 }, (_, cell) => cell === 0 ? 0 : -1);
+    board[1] = -3;
+    board[2] = 5;
+    expect(advantageIndex(board, FIRST_PLAYER)).toBeGreaterThan(50);
+    expect(advantageIndex(board, SECOND_PLAYER)).toBeLessThan(50);
+  });
+
+  it('AI 对局撤回到上一个真人决策点，双人对局只撤一手', () => {
+    expect(undoKeepCount(['ai', 'human', 'ai'], false, 1)).toBe(1);
+    expect(undoKeepCount(['human', 'ai'], false)).toBe(0);
+    expect(undoKeepCount(['player1', 'player2', 'player1'], true)).toBe(2);
   });
 });
 
