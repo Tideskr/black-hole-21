@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   FIRST_PLAYER, SECOND_PLAYER, NEIGHBORS, advantageIndex, certifiedMove, emptyBoard,
-  nextNumber, place, scoreBoard, shouldRecordTrend, shouldUseExactEvaluation,
+  nextNumber, place, recommendTrapMove, scoreBoard, shouldRecordTrend, shouldUseExactEvaluation,
   undoKeepCount, type RuntimeCertificate,
 } from './game';
 
@@ -61,6 +61,25 @@ describe('棋盘规则', () => {
     expect(shouldUseExactEvaluation([...Array(8).fill(-1), ...Array(13).fill(0)])).toBe(false);
     expect(shouldUseExactEvaluation([...Array(9).fill(-1), ...Array(12).fill(0)])).toBe(true);
     expect(shouldUseExactEvaluation([...Array(20).fill(-1), 0])).toBe(false);
+  });
+
+  it('最优提示先保胜负等级，再选择对手最容易失误的分支', () => {
+    const recommendation = recommendTrapMove([
+      { cell: 2, guaranteedValue: 0, opponentValues: [0, 0, 101] },
+      { cell: 5, guaranteedValue: 0, opponentValues: [0, 102, 101] },
+      { cell: 7, guaranteedValue: -101, opponentValues: [-101, 0, 102] },
+    ]);
+    expect(recommendation).toMatchObject({ cell: 5, guaranteedValue: 0, opponentMistakes: 2, opponentReplies: 3 });
+
+    expect(recommendTrapMove([
+      { cell: 9, guaranteedValue: 101, opponentValues: [101, 101] },
+      { cell: 3, guaranteedValue: 0, opponentValues: [0, 102] },
+    ])?.cell).toBe(9);
+
+    expect(recommendTrapMove([
+      { cell: 4, guaranteedValue: -101, opponentValues: [-101, -101] },
+      { cell: 8, guaranteedValue: -105, opponentValues: [-105, 0] },
+    ])?.cell).toBe(8);
   });
 });
 

@@ -43,6 +43,53 @@ export interface ScoreResult {
   winner: Player | 0;
 }
 
+export interface TrapCandidate {
+  cell: number;
+  guaranteedValue: number;
+  opponentValues: number[];
+}
+
+export interface TrapRecommendation {
+  cell: number;
+  guaranteedValue: number;
+  opponentMistakes: number;
+  opponentReplies: number;
+  averageMistakeCost: number;
+}
+
+export function recommendTrapMove(candidates: readonly TrapCandidate[]): TrapRecommendation | null {
+  if (candidates.length === 0) return null;
+  const bestOutcome = Math.max(...candidates.map((candidate) => Math.sign(candidate.guaranteedValue)));
+  const recommendations = candidates
+    .filter((candidate) => Math.sign(candidate.guaranteedValue) === bestOutcome)
+    .map((candidate) => {
+      const defensiveValue = candidate.opponentValues.length > 0
+        ? Math.min(...candidate.opponentValues)
+        : candidate.guaranteedValue;
+      const opponentMistakes = candidate.opponentValues.filter((value) => value > defensiveValue).length;
+      const averageMistakeCost = candidate.opponentValues.length > 0
+        ? candidate.opponentValues.reduce((sum, value) => sum + Math.max(0, value - defensiveValue), 0) / candidate.opponentValues.length
+        : 0;
+      return {
+        cell: candidate.cell,
+        guaranteedValue: candidate.guaranteedValue,
+        opponentMistakes,
+        opponentReplies: candidate.opponentValues.length,
+        averageMistakeCost,
+      };
+    });
+
+  return recommendations.sort((left, right) => {
+    const leftReplies = Math.max(1, left.opponentReplies);
+    const rightReplies = Math.max(1, right.opponentReplies);
+    const rateOrder = right.opponentMistakes * leftReplies - left.opponentMistakes * rightReplies;
+    if (rateOrder !== 0) return rateOrder;
+    if (right.averageMistakeCost !== left.averageMistakeCost) return right.averageMistakeCost - left.averageMistakeCost;
+    if (right.guaranteedValue !== left.guaranteedValue) return right.guaranteedValue - left.guaranteedValue;
+    return left.cell - right.cell;
+  })[0];
+}
+
 export function emptyBoard(): Board { return Array(21).fill(0); }
 export function placedCount(board: Board): number { return board.reduce((sum, value) => sum + Number(value !== 0), 0); }
 export function nextNumber(board: Board): number { return Math.floor(placedCount(board) / 2) + 1; }

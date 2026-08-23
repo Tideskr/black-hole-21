@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FIRST_PLAYER, SECOND_PLAYER, NEIGHBORS, ROWS, advantageIndex, certifiedMove, emptyBoard,
   emptyCells, formatInteger, nextNumber, nextPlayer, outcomeLabel, place,
-  scoreBoard, shouldRecordTrend, shouldUseExactEvaluation, undoKeepCount,
+  recommendTrapMove, scoreBoard, shouldRecordTrend, shouldUseExactEvaluation, undoKeepCount,
   type Board, type Player, type RuntimeCertificate, type ScoreResult,
 } from '../lib/game';
 import type { AiRequest, AiResponse } from '../workers/protocol';
@@ -31,9 +31,12 @@ interface MoveAnalysis {
   wins: number;
   draws: number;
   losses: number;
-  bestMoves: number;
   total: number;
   bestFirstValue: number;
+  recommendedCell: number;
+  recommendationValue: number;
+  opponentMistakes: number;
+  opponentReplies: number;
   nodes: number;
   cutoffs: number;
 }
@@ -110,7 +113,12 @@ function AdvantageChart({
   const certainty = pending ? '评估中…' : current.certainty === 'proof' ? '策略保证' : current.certainty === 'exact' ? '精确搜索' : mode === 'local' ? '近似估值（虚线）' : 'MCTS 估值（虚线）';
   const cadence = mode === 'local' ? '双方每次落子后更新' : 'AI 完成回应后更新';
   const exactExplanation = '精确结果固定为胜 100／和 50／负 0；尚未精确求解的前期局面以虚线显示估值。';
-  const tolerance = analysis ? Math.round((analysis.bestMoves / analysis.total) * 100) : null;
+  const safeMoves = analysis ? analysis.wins + analysis.draws : 0;
+  const safetyRate = analysis ? Math.round((safeMoves / analysis.total) * 100) : null;
+  const aiMargin = analysis && analysis.bestFirstValue > 0 ? Math.max(0, analysis.bestFirstValue - 100) : null;
+  const recommendationOutcome = analysis
+    ? analysis.recommendationValue > 0 ? '可保胜' : analysis.recommendationValue === 0 ? '可保和' : '败局难免'
+    : '';
 
   return (
     <section className="advantage-card" aria-label={`${label} ${current.value}`}>
@@ -139,11 +147,20 @@ function AdvantageChart({
       </div>
       <div className="chart-caption"><span className={pending ? 'pending' : ''}>{certainty}</span><span>{current.label}</span></div>
       <p>{cadence}。{exactExplanation}</p>
-      {analysis && tolerance !== null && (
+      {analysis && mode === 'ai-first' && aiMargin !== null && (
+        <div className="tolerance-card margin-card">
+          <div className="tolerance-heading">
+            <div><span className="kicker">AI 保证分差</span><strong>完美防守下</strong></div>
+            <b>{aiMargin}<small> 分</small></b>
+          </div>
+          <p>AI 的黑洞邻和至少比你少 {aiMargin} 分；这是精确搜索结果，不是胜率估计。</p>
+        </div>
+      )}
+      {analysis && mode !== 'ai-first' && safetyRate !== null && (
         <div className="tolerance-card">
           <div className="tolerance-heading">
-            <div><span className="kicker">着法容错率</span><strong>{analysisPlayer}</strong></div>
-            <b>{tolerance}<small>%</small></b>
+            <div><span className="kicker">不败着法率</span><strong>{analysisPlayer}</strong></div>
+            <b>{safetyRate}<small>%</small></b>
           </div>
           <div className="outcome-bar" aria-label={`${analysis.wins} 胜 ${analysis.draws} 和 ${analysis.losses} 负`}>
             <span className="wins" style={{ width: `${analysis.wins / analysis.total * 100}%` }} />
@@ -155,7 +172,19 @@ function AdvantageChart({
             <span><i className="draw-dot" />{analysis.draws} 和</span>
             <span><i className="loss-dot" />{analysis.losses} 负</span>
           </div>
-          <p>{analysis.bestMoves}/{analysis.total} 种合法着法能维持当前最佳结果。</p>
+          <p>{safeMoves}/{analysis.total} 种合法着法至少可以保和。</p>
+        </div>
+      )}
+      {analysis && (
+        <div className="recommendation-card">
+          <div>
+            <span className="kicker">最优招法</span>
+            <strong>格 {String(analysis.recommendedCell + 1).padStart(2, '0')}</strong>
+          </div>
+          <span className={`outcome-pill ${analysis.recommendationValue > 0 ? 'winning' : analysis.recommendationValue === 0 ? 'drawing' : 'losing'}`}>{recommendationOutcome}</span>
+          <p>{analysis.opponentReplies > 0
+            ? `对手 ${analysis.opponentMistakes}/${analysis.opponentReplies} 种回应会偏离最佳防守；相同比例时选择失误代价更大的分支。`
+            : '这是最后一手，无后续回应分支。'}</p>
         </div>
       )}
     </section>
@@ -228,7 +257,7 @@ export function BlackHoleGame() {
 
   const analyzeLegalMoves = useCallback(async (position: Board): Promise<MoveAnalysis> => {
     const player = nextPlayer(position);
-    const branches: Array<{ firstValue: number; orientedValue: number }> = [];
+    const branches: Array<{ cell: number; child: Board; firstValue: number; orientedValue: number; opponentValues: number[] }> = [];
     let nodes = 0;
     let cutoffs = 0;
     for (const cell of emptyCells(position)) {
@@ -244,22 +273,49 @@ export function BlackHoleGame() {
         cutoffs += response.cutoffs ?? 0;
       }
       branches.push({
+        cell,
+        child,
         firstValue,
         orientedValue: player === FIRST_PLAYER ? firstValue : -firstValue,
+        opponentValues: [],
       });
     }
     const bestOriented = Math.max(...branches.map((branch) => branch.orientedValue));
     const bestCategory = Math.sign(bestOriented);
-    const bestMoves = branches.filter((branch) => bestCategory < 0
-      ? branch.orientedValue === bestOriented
-      : Math.sign(branch.orientedValue) === bestCategory).length;
+    for (const branch of branches.filter((candidate) => Math.sign(candidate.orientedValue) === bestCategory)) {
+      if (scoreBoard(branch.child)) continue;
+      const opponent = nextPlayer(branch.child);
+      for (const responseCell of emptyCells(branch.child)) {
+        const responseBoard = place(branch.child, responseCell, opponent);
+        const terminal = scoreBoard(responseBoard);
+        let responseFirstValue: number;
+        if (terminal) {
+          responseFirstValue = terminalValue(terminal);
+        } else {
+          const response = await askEngine({ kind: 'exactBestMove', board: responseBoard, player: nextPlayer(responseBoard) });
+          responseFirstValue = response.value ?? 0;
+          nodes += response.nodes ?? 0;
+          cutoffs += response.cutoffs ?? 0;
+        }
+        branch.opponentValues.push(player === FIRST_PLAYER ? responseFirstValue : -responseFirstValue);
+      }
+    }
+    const recommendation = recommendTrapMove(branches.map((branch) => ({
+      cell: branch.cell,
+      guaranteedValue: branch.orientedValue,
+      opponentValues: branch.opponentValues,
+    })));
+    if (!recommendation) throw new Error('当前局面没有合法着法');
     return {
       wins: branches.filter((branch) => branch.orientedValue > 0).length,
       draws: branches.filter((branch) => branch.orientedValue === 0).length,
       losses: branches.filter((branch) => branch.orientedValue < 0).length,
-      bestMoves,
       total: branches.length,
       bestFirstValue: branches.find((branch) => branch.orientedValue === bestOriented)?.firstValue ?? 0,
+      recommendedCell: recommendation.cell,
+      recommendationValue: recommendation.guaranteedValue,
+      opponentMistakes: recommendation.opponentMistakes,
+      opponentReplies: recommendation.opponentReplies,
       nodes,
       cutoffs,
     };
@@ -500,11 +556,12 @@ export function BlackHoleGame() {
                   const isHole = result?.hole === cell;
                   const owner = value === 0 ? null : value < 0 ? FIRST_PLAYER : SECOND_PLAYER;
                   const ownerName = owner ? playerName(owner) : '';
-                  const label = isHole ? '黑洞' : value === 0 ? `第 ${cell + 1} 格，空` : `${ownerName}，数字 ${Math.abs(value)}`;
+                  const isRecommended = !result && moveAnalysis?.recommendedCell === cell;
+                  const label = isHole ? '黑洞' : value === 0 ? `第 ${cell + 1} 格，空${isRecommended ? '，推荐着法' : ''}` : `${ownerName}，数字 ${Math.abs(value)}`;
                   const pieceClass = owner === FIRST_PLAYER ? 'first-piece' : owner === SECOND_PLAYER ? 'second-piece' : '';
                   return (
                     <button
-                      className={`cell ${pieceClass} ${isHole ? 'hole' : ''} ${scoreNeighbors.has(cell) ? 'scored-neighbor' : ''}`}
+                      className={`cell ${pieceClass} ${isHole ? 'hole' : ''} ${scoreNeighbors.has(cell) ? 'scored-neighbor' : ''} ${isRecommended ? 'recommended-move' : ''}`}
                       key={cell}
                       aria-label={label}
                       disabled={thinking || evaluating || Boolean(result) || value !== 0 || !canPlay}
