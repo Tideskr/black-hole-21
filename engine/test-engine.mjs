@@ -65,6 +65,23 @@ try {
   if (localBestMove !== 1 || engine._get_last_value() !== 0) {
     throw new Error(`双人残局应由后手下格 2 逼和，实际 move=${localBestMove + 1}, value=${engine._get_last_value()}`);
   }
+
+  const toleranceBoard = [-1, -3, 2, 3, -4, 4, 0, 0, 0, 0, -5, 0, 0, 0, 0, -2, 0, 0, 0, 5, 1];
+  const toleranceCounts = { wins: 0, draws: 0, losses: 0 };
+  for (let cell = 0; cell < 21; cell += 1) {
+    if (toleranceBoard[cell] !== 0) continue;
+    const child = [...toleranceBoard];
+    child[cell] = -6;
+    engine.HEAP8.set(Int8Array.from(child), pointer);
+    engine._exact_best_move(pointer, 1);
+    const value = engine._get_last_value();
+    if (value > 0) toleranceCounts.wins += 1;
+    else if (value === 0) toleranceCounts.draws += 1;
+    else toleranceCounts.losses += 1;
+  }
+  if (toleranceCounts.wins !== 0 || toleranceCounts.draws !== 6 || toleranceCounts.losses !== 5) {
+    throw new Error(`着法容错率回归失败：${JSON.stringify(toleranceCounts)}`);
+  }
   console.log('C/WASM 引擎通过 12 个随机残局与终局符号对照。');
 } finally {
   engine._free(pointer);

@@ -26,6 +26,16 @@ interface MoveRecord {
 }
 
 interface TrendPoint { label: string; value: number; certainty: Certainty; }
+interface MoveAnalysis {
+  wins: number;
+  draws: number;
+  losses: number;
+  bestMoves: number;
+  total: number;
+  bestFirstValue: number;
+  nodes: number;
+  cutoffs: number;
+}
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(maximum, value));
@@ -35,15 +45,13 @@ function perspectiveFor(mode: Mode): Player {
   return mode === 'human-first' ? SECOND_PLAYER : FIRST_PLAYER;
 }
 
-function guaranteedIndex(heuristic: number) {
-  return Math.round(clamp(78 + (heuristic - 50) * 0.22, 69, 92));
-}
-
 function exactIndex(value: number, perspective: Player) {
   const oriented = perspective === FIRST_PLAYER ? value : -value;
-  if (oriented === 0) return 50;
-  const margin = Math.max(0, Math.abs(value) - 100);
-  return oriented > 0 ? Math.min(100, 80 + margin * 2) : Math.max(0, 20 - margin * 2);
+  return oriented > 0 ? 100 : oriented < 0 ? 0 : 50;
+}
+
+function terminalValue(score: ScoreResult) {
+  return score.diff > 0 ? 100 + score.diff : score.diff < 0 ? -100 + score.diff : 0;
 }
 
 function replay(moves: readonly MoveRecord[]): Board {
@@ -55,7 +63,7 @@ function replay(moves: readonly MoveRecord[]): Board {
 function trendFromMoves(moves: readonly MoveRecord[], mode: Mode): TrendPoint[] {
   const points: TrendPoint[] = [{
     label: '开局',
-    value: mode === 'ai-first' ? 78 : 50,
+    value: mode === 'ai-first' ? 100 : 50,
     certainty: mode === 'ai-first' ? 'proof' : 'estimate',
   }];
   for (const move of moves) {
@@ -71,56 +79,84 @@ function trendFromMoves(moves: readonly MoveRecord[], mode: Mode): TrendPoint[] 
 
 function initialAiGame(): { board: Board; moves: MoveRecord[] } {
   const board = place(emptyBoard(), 0, FIRST_PLAYER);
-  const base = advantageIndex(board, FIRST_PLAYER);
   return {
     board,
     moves: [{
       side: 'ai', player: FIRST_PLAYER, number: 1, cell: 0, source: 'certificate',
-      evaluation: guaranteedIndex(base), certainty: 'proof',
+      evaluation: 100, certainty: 'proof',
     }],
   };
 }
 
-function AdvantageChart({ points, mode, pending }: { points: TrendPoint[]; mode: Mode; pending: boolean }) {
+function AdvantageChart({
+  points, mode, pending, analysis, analysisPlayer,
+}: {
+  points: TrendPoint[];
+  mode: Mode;
+  pending: boolean;
+  analysis: MoveAnalysis | null;
+  analysisPlayer: string;
+}) {
   const width = 320;
   const height = 104;
   const current = points.at(-1) ?? { value: 50, certainty: 'estimate' as const, label: '开局' };
   const coordinates = points.map((point, index) => {
     const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
     const y = height - (point.value / 100) * height;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-  const label = mode === 'local' ? '先手优势指数' : 'AI 胜势指数';
-  const certainty = pending ? '评估中…' : current.certainty === 'proof' ? '策略保证' : current.certainty === 'exact' ? '精确搜索' : '局面估值';
+    return { x, y };
+  });
+  const label = mode === 'local' ? '先手理论结果' : 'AI 理论结果';
+  const certainty = pending ? '评估中…' : current.certainty === 'proof' ? '策略保证' : current.certainty === 'exact' ? '精确搜索' : mode === 'local' ? '近似估值（虚线）' : 'MCTS 估值（虚线）';
   const cadence = mode === 'local' ? '双方每次落子后更新' : 'AI 完成回应后更新';
-  const explanation = mode === 'local'
-    ? '使用潜在黑洞的邻和差衡量先手压力，不是统计胜率。'
-    : '搜索结果先落入胜／和／负区间，再按终局分差表示取胜难度，不是统计胜率。';
+  const exactExplanation = '精确结果固定为胜 100／和 50／负 0；尚未精确求解的前期局面以虚线显示估值。';
+  const tolerance = analysis ? Math.round((analysis.bestMoves / analysis.total) * 100) : null;
 
   return (
     <section className="advantage-card" aria-label={`${label} ${current.value}`}>
       <div className="advantage-heading">
         <div><span className="kicker">实时局势</span><strong>{label}</strong></div>
-        <div className="advantage-number"><b>{current.value}</b><small>/100</small></div>
+        <div className="advantage-number"><b>{current.certainty === 'estimate' ? '≈' : ''}{current.value}</b><small>/100</small></div>
       </div>
       <div className="chart-wrap">
         <span className="chart-label top">胜</span>
         <span className="chart-label middle">和</span>
         <span className="chart-label bottom">负</span>
         <svg className="advantage-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${label}变化曲线`}>
-          <line x1="0" y1="20.8" x2={width} y2="20.8" />
-          <line x1="0" y1="52" x2={width} y2="52" />
-          <line x1="0" y1="83.2" x2={width} y2="83.2" />
-          <polyline points={coordinates} />
+          <line className="chart-grid" x1="0" y1="2" x2={width} y2="2" />
+          <line className="chart-grid" x1="0" y1="52" x2={width} y2="52" />
+          <line className="chart-grid" x1="0" y1="102" x2={width} y2="102" />
+          {coordinates.slice(1).map((coordinate, index) => {
+            const previous = coordinates[index];
+            const estimated = points[index].certainty === 'estimate' || points[index + 1].certainty === 'estimate';
+            return <line className={`trend-segment ${estimated ? 'estimated' : 'resolved'}`} key={`segment-${index}`} x1={previous.x} y1={previous.y} x2={coordinate.x} y2={coordinate.y} />;
+          })}
           {points.map((point, index) => {
-            const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
-            const y = height - (point.value / 100) * height;
-            return <circle key={`${point.label}-${index}`} cx={x} cy={y} r={index === points.length - 1 ? 4 : 2.2} />;
+            const coordinate = coordinates[index];
+            return <circle className={point.certainty === 'estimate' ? 'estimated' : 'resolved'} key={`${point.label}-${index}`} cx={coordinate.x} cy={coordinate.y} r={index === points.length - 1 ? 4 : 2.2} />;
           })}
         </svg>
       </div>
       <div className="chart-caption"><span className={pending ? 'pending' : ''}>{certainty}</span><span>{current.label}</span></div>
-      <p>{cadence}。{explanation}</p>
+      <p>{cadence}。{exactExplanation}</p>
+      {analysis && tolerance !== null && (
+        <div className="tolerance-card">
+          <div className="tolerance-heading">
+            <div><span className="kicker">着法容错率</span><strong>{analysisPlayer}</strong></div>
+            <b>{tolerance}<small>%</small></b>
+          </div>
+          <div className="outcome-bar" aria-label={`${analysis.wins} 胜 ${analysis.draws} 和 ${analysis.losses} 负`}>
+            <span className="wins" style={{ width: `${analysis.wins / analysis.total * 100}%` }} />
+            <span className="draws" style={{ width: `${analysis.draws / analysis.total * 100}%` }} />
+            <span className="losses" style={{ width: `${analysis.losses / analysis.total * 100}%` }} />
+          </div>
+          <div className="outcome-counts">
+            <span><i className="win-dot" />{analysis.wins} 胜</span>
+            <span><i className="draw-dot" />{analysis.draws} 和</span>
+            <span><i className="loss-dot" />{analysis.losses} 负</span>
+          </div>
+          <p>{analysis.bestMoves}/{analysis.total} 种合法着法能维持当前最佳结果。</p>
+        </div>
+      )}
     </section>
   );
 }
@@ -138,6 +174,7 @@ export function BlackHoleGame() {
   const [detail, setDetail] = useState('策略证书 · 第 1 手固定在格 01');
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ScoreResult | null>(null);
+  const [moveAnalysis, setMoveAnalysis] = useState<MoveAnalysis | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const generationRef = useRef(0);
   const requestRef = useRef(0);
@@ -188,12 +225,52 @@ export function BlackHoleGame() {
     worker.postMessage({ ...request, id } satisfies AiRequest);
   }), [createWorker]);
 
+  const analyzeLegalMoves = useCallback(async (position: Board): Promise<MoveAnalysis> => {
+    const player = nextPlayer(position);
+    const branches: Array<{ firstValue: number; orientedValue: number }> = [];
+    let nodes = 0;
+    let cutoffs = 0;
+    for (const cell of emptyCells(position)) {
+      const child = place(position, cell, player);
+      const terminal = scoreBoard(child);
+      let firstValue: number;
+      if (terminal) {
+        firstValue = terminalValue(terminal);
+      } else {
+        const response = await askEngine({ kind: 'exactBestMove', board: child, player: nextPlayer(child) });
+        firstValue = response.value ?? 0;
+        nodes += response.nodes ?? 0;
+        cutoffs += response.cutoffs ?? 0;
+      }
+      branches.push({
+        firstValue,
+        orientedValue: player === FIRST_PLAYER ? firstValue : -firstValue,
+      });
+    }
+    const bestOriented = Math.max(...branches.map((branch) => branch.orientedValue));
+    const bestCategory = Math.sign(bestOriented);
+    const bestMoves = branches.filter((branch) => bestCategory < 0
+      ? branch.orientedValue === bestOriented
+      : Math.sign(branch.orientedValue) === bestCategory).length;
+    return {
+      wins: branches.filter((branch) => branch.orientedValue > 0).length,
+      draws: branches.filter((branch) => branch.orientedValue === 0).length,
+      losses: branches.filter((branch) => branch.orientedValue < 0).length,
+      bestMoves,
+      total: branches.length,
+      bestFirstValue: branches.find((branch) => branch.orientedValue === bestOriented)?.firstValue ?? 0,
+      nodes,
+      cutoffs,
+    };
+  }, [askEngine]);
+
   const startGame = useCallback((selectedMode: Mode = mode) => {
     generationRef.current += 1;
     restartWorker();
     setMode(selectedMode);
     setError(null);
     setResult(null);
+    setMoveAnalysis(null);
     setThinking(false);
     setEvaluating(false);
     setThinkingSeconds(0);
@@ -215,6 +292,7 @@ export function BlackHoleGame() {
     const score = scoreBoard(nextBoard);
     if (!score) return false;
     setResult(score);
+    setMoveAnalysis(null);
     setThinking(false);
     return true;
   }, []);
@@ -225,6 +303,7 @@ export function BlackHoleGame() {
     const number = nextNumber(position);
     setThinkingSeconds(0);
     setThinking(true);
+    setMoveAnalysis(null);
     setDetail(number <= 4 && currentMode === 'ai-first' ? `正在查询策略证书 · 第 ${number} 手` : 'AI 正在搜索…');
     const started = performance.now();
     try {
@@ -239,13 +318,12 @@ export function BlackHoleGame() {
         move = certifiedMove(certificate, humanMoves, number);
         source = 'certificate';
         await new Promise((resolve) => window.setTimeout(resolve, 180));
-        const previewBoard = place(position, move, aiPlayer);
-        evaluation = guaranteedIndex(advantageIndex(previewBoard, aiPlayer));
+        evaluation = 100;
         certainty = 'proof';
         nextDetail = `策略证书 · 第 ${number} 手选择格 ${String(move + 1).padStart(2, '0')}`;
       } else {
         const empty = emptyCells(position).length;
-        const exact = currentMode === 'ai-first' || empty <= 10;
+        const exact = currentMode === 'ai-first' || empty <= 12;
         const response = await askEngine({
           kind: exact ? 'exactBestMove' : 'strongBestMove',
           board: position,
@@ -268,31 +346,42 @@ export function BlackHoleGame() {
       if (generationRef.current !== gameGeneration) return;
       const nextBoard = place(position, move, aiPlayer);
       if (scoreBoard(nextBoard)) evaluation = advantageIndex(nextBoard, aiPlayer);
-      const nextHistory = [...history, { side: 'ai' as const, player: aiPlayer, number, cell: move, source, evaluation, certainty }];
+      let nextHistory = [...history, { side: 'ai' as const, player: aiPlayer, number, cell: move, source, evaluation, certainty }];
       setBoard(nextBoard);
       setMoves(nextHistory);
       setTrend(trendFromMoves(nextHistory, currentMode));
       setDetail(nextDetail);
       setThinking(false);
-      finishIfNeeded(nextBoard);
+      const finished = finishIfNeeded(nextBoard);
+      if (!finished && shouldUseExactEvaluation(nextBoard)) {
+        setEvaluating(true);
+        const analysis = await analyzeLegalMoves(nextBoard);
+        if (generationRef.current !== gameGeneration) return;
+        const resolvedEvaluation = exactIndex(analysis.bestFirstValue, aiPlayer);
+        nextHistory = nextHistory.map((item, index) => index === nextHistory.length - 1
+          ? { ...item, evaluation: resolvedEvaluation, certainty: 'exact' as const }
+          : item);
+        setMoves(nextHistory);
+        setTrend(trendFromMoves(nextHistory, currentMode));
+        setMoveAnalysis(analysis);
+        setEvaluating(false);
+      }
     } catch (cause) {
       if (generationRef.current !== gameGeneration) return;
       setThinking(false);
+      setEvaluating(false);
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [askEngine, certificate, finishIfNeeded]);
+  }, [analyzeLegalMoves, askEngine, certificate, finishIfNeeded]);
 
   const runLocalEvaluation = useCallback(async (position: Board, history: MoveRecord[], gameGeneration: number) => {
     setEvaluating(true);
-    setDetail('正在精确评估双人残局…');
+    setMoveAnalysis(null);
+    setDetail('正在精确分析全部合法着法…');
     try {
-      const response = await askEngine({
-        kind: 'exactBestMove',
-        board: position,
-        player: nextPlayer(position),
-      });
+      const analysis = await analyzeLegalMoves(position);
       if (generationRef.current !== gameGeneration) return;
-      const value = response.value ?? 0;
+      const value = analysis.bestFirstValue;
       const evaluation = exactIndex(value, FIRST_PLAYER);
       const nextHistory = history.map((move, index) => index === history.length - 1
         ? { ...move, evaluation, certainty: 'exact' as const }
@@ -300,14 +389,15 @@ export function BlackHoleGame() {
       const outcome = value > 0 ? '完美应对下先手可胜' : value < 0 ? '完美应对下后手可胜' : '完美应对下可逼平';
       setMoves(nextHistory);
       setTrend(trendFromMoves(nextHistory, 'local'));
-      setDetail(`精确残局 · ${formatInteger(response.nodes ?? 0)} 节点 · ${formatInteger(response.cutoffs ?? 0)} 次剪枝 · ${outcome}`);
+      setMoveAnalysis(analysis);
+      setDetail(`精确残局 · ${formatInteger(analysis.nodes)} 节点 · ${formatInteger(analysis.cutoffs)} 次剪枝 · ${outcome}`);
       setEvaluating(false);
     } catch (cause) {
       if (generationRef.current !== gameGeneration) return;
       setEvaluating(false);
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [askEngine]);
+  }, [analyzeLegalMoves]);
 
   const humanMove = useCallback((cell: number) => {
     if (thinking || evaluating || result || board[cell] !== 0) return;
@@ -318,13 +408,14 @@ export function BlackHoleGame() {
     const nextBoard = place(board, cell, currentPlayer);
     const perspective = perspectiveFor(mode);
     const rawEvaluation = advantageIndex(nextBoard, perspective);
-    const evaluation = mode === 'ai-first' ? guaranteedIndex(rawEvaluation) : rawEvaluation;
+    const evaluation = mode === 'ai-first' ? 100 : rawEvaluation;
     const side: MoveSide = mode === 'local' ? (currentPlayer === FIRST_PLAYER ? 'player1' : 'player2') : 'human';
     const certainty: Certainty = mode === 'ai-first' ? 'proof' : 'estimate';
     const nextHistory = [...moves, { side, player: currentPlayer, number, cell, source: 'human' as const, evaluation, certainty }];
     const exactLocalEvaluation = mode === 'local' && shouldUseExactEvaluation(nextBoard);
     setBoard(nextBoard);
     setMoves(nextHistory);
+    setMoveAnalysis(null);
     if (!exactLocalEvaluation) setTrend(trendFromMoves(nextHistory, mode));
     setError(null);
     if (finishIfNeeded(nextBoard)) return;
@@ -346,6 +437,7 @@ export function BlackHoleGame() {
     setMoves(nextMoves);
     setTrend(trendFromMoves(nextMoves, mode));
     setResult(null);
+    setMoveAnalysis(null);
     setError(null);
     setThinking(false);
     setEvaluating(false);
@@ -366,7 +458,7 @@ export function BlackHoleGame() {
     : result
       ? winnerText
       : evaluating
-        ? '正在精确评估双人残局…'
+        ? '正在精确分析全部合法着法…'
         : thinking
           ? `AI 思考中 · ${thinkingSeconds.toFixed(1)} 秒`
           : `${playerName(currentPlayer)}落子 · 数字 ${nextNumber(board)}`;
@@ -427,7 +519,13 @@ export function BlackHoleGame() {
         </div>
 
         <aside className="game-rail">
-          <AdvantageChart points={trend} mode={mode} pending={thinking || evaluating} />
+          <AdvantageChart
+            points={trend}
+            mode={mode}
+            pending={thinking || evaluating}
+            analysis={moveAnalysis}
+            analysisPlayer={playerName(currentPlayer)}
+          />
 
           <section className="rules-card">
             <span className="kicker">怎么玩</span>

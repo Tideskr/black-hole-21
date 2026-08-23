@@ -62,7 +62,7 @@ export function shouldRecordTrend(localGame: boolean, side: string): boolean {
 
 export function shouldUseExactEvaluation(board: Board): boolean {
   const remaining = emptyCells(board).length;
-  return remaining > 1 && remaining <= 10;
+  return remaining > 1 && remaining <= 12;
 }
 
 export function place(board: Board, cell: number, player: Player): Board {
@@ -101,8 +101,7 @@ export function advantageIndex(board: Board, perspective: Player): number {
   const terminal = scoreBoard(board);
   if (terminal) {
     if (terminal.winner === 0) return 50;
-    const margin = Math.abs(terminal.diff);
-    return terminal.winner === perspective ? Math.min(100, 82 + margin * 2) : Math.max(0, 18 - margin * 2);
+    return terminal.winner === perspective ? 100 : 0;
   }
 
   const empties = emptyCells(board);

@@ -39,8 +39,8 @@ describe('棋盘规则', () => {
     const board = Array.from({ length: 21 }, (_, cell) => cell === 0 ? 0 : -1);
     board[1] = -3;
     board[2] = 5;
-    expect(advantageIndex(board, FIRST_PLAYER)).toBeGreaterThan(50);
-    expect(advantageIndex(board, SECOND_PLAYER)).toBeLessThan(50);
+    expect(advantageIndex(board, FIRST_PLAYER)).toBe(100);
+    expect(advantageIndex(board, SECOND_PLAYER)).toBe(0);
   });
 
   it('AI 对局撤回到上一个真人决策点，双人对局只撤一手', () => {
@@ -56,9 +56,10 @@ describe('棋盘规则', () => {
     expect(shouldRecordTrend(true, 'player2')).toBe(true);
   });
 
-  it('双人残局从剩余 10 格开始使用精确评估', () => {
+  it('双人残局从剩余 12 格开始使用精确评估', () => {
     expect(shouldUseExactEvaluation(Array(21).fill(0))).toBe(false);
-    expect(shouldUseExactEvaluation([...Array(11).fill(-1), ...Array(10).fill(0)])).toBe(true);
+    expect(shouldUseExactEvaluation([...Array(8).fill(-1), ...Array(13).fill(0)])).toBe(false);
+    expect(shouldUseExactEvaluation([...Array(9).fill(-1), ...Array(12).fill(0)])).toBe(true);
     expect(shouldUseExactEvaluation([...Array(20).fill(-1), 0])).toBe(false);
   });
 });
